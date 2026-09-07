@@ -1,0 +1,111 @@
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+
+linters:
+  default: none
+  enable:
+    - errcheck        # непроверенные ошибки
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - revive          # стиль
+    - gocritic
+    - gosec           # безопасность
+    - bodyclose       # незакрытые response body
+    - contextcheck    # потерянный context
+    - noctx           # запросы без context
+    - nilerr          # return nil при ненулевой ошибке
+    - errorlint       # сравнение ошибок без errors.Is
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+    - prealloc
+    - depguard        # границы слоёв
+
+  settings:
+    depguard:
+      rules:
+        # domain не импортирует НИЧЕГО из проекта и почти ничего извне.
+        # Список allow исчерпывающий: что не разрешено — запрещено.
+        domain-is-pure:
+          files:
+            - "**/internal/domain/**"
+          allow:
+            - $gostd
+            - github.com/google/uuid
+        # Бизнес-слой не знает про HTTP.
+        no-http-in-core:
+          files:
+            - "**/internal/vote/**"
+            - "**/internal/ballot/**"
+            - "**/internal/snapshot/**"
+            - "**/internal/pollcfg/**"
+          deny:
+            - pkg: net/http
+              desc: "HTTP живёт только в internal/httpapi; бизнес-слой о нём не знает"
+        # Секреты и голоса не должны утекать в сторонние логгеры.
+        no-adhoc-logging:
+          files:
+            - "**/internal/**"
+          deny:
+            - pkg: log
+              desc: "используй log/slog из internal/observability"
+            - pkg: github.com/sirupsen/logrus
+              desc: "в проекте один логгер — log/slog"
+
+    revive:
+      rules:
+        - name: exported
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: indent-error-flow
+        - name: unexported-return
+        - name: var-naming
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam       # на горячем пути параметры и так по указателю
+        - whyNoLint
+
+    gosec:
+      excludes:
+        - G115           # конверсии целых проверяются доменной валидацией
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+  exclusions:
+    generated: lax
+    rules:
+      # В тестах допустимы длинные функции и «магические» значения.
+      - path: _test\.go
+        linters:
+          - gosec
+          - prealloc
+          - errcheck
+      # Lua-скрипт встроен строкой — gosec видит в нём «команду».
+      - path: internal/vote/script\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/OWNER/televote

@@ -1,0 +1,25 @@
+# Секреты — только .env.example в репозитории
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Сборка
+/bin/
+/dist/
+televote
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Локальные данные стенда
+/deploy/data/
+/load/results/
+
+# IDE и ОС
+.idea/
+.vscode/
+.DS_Store

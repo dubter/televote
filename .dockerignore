@@ -1,0 +1,12 @@
+.git
+.github
+docs
+load
+scripts
+deploy
+*.md
+.env*
+!.env.example
+bin
+dist
+coverage.*
