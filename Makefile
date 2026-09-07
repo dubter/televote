@@ -74,6 +74,19 @@ chaos: ## сценарии отказов с проверкой корректн
 load: ## k6: стоимость одного голоса + сверка суммы счётчиков
 	@$(COMPOSE) --profile load run --rm k6 run /scripts/vote.js
 
+# ─── спецификация ─────────────────────────────────────────────────────────
+.PHONY: verify-requirements
+verify-requirements: ## сверить имена тестов с docs/specs/acceptance.md
+	@scripts/verify-requirements.sh
+
+.PHONY: verify-invariants
+verify-invariants: ## сломать каждый инвариант и убедиться, что тест краснеет
+	@scripts/verify-invariants.sh
+
+.PHONY: test-acceptance
+test-acceptance: ## приёмочные тесты через HTTP (нужен поднятый стенд)
+	@go test -count=1 -tags=acceptance -timeout=10m ./test/acceptance/...
+
 # ─── разработка ───────────────────────────────────────────────────────────
 .PHONY: build
 build: ## собрать бинарь

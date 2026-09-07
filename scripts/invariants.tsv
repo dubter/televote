@@ -1,0 +1,12 @@
+# инвариант	файл	мутация (sed)	тест, который обязан упасть
+ttl>=exp+skew	internal/config/config.go	s/DedupTTL < cfg.BallotTTL/false \&\& DedupTTL < cfg.BallotTTL/	TestConfig_RejectsShortDedupTTL
+hash tag	internal/vote/keys.go	s/{p:/p:/	TestVote_NoCrossSlotError
+shard_count из опроса	internal/vote/caster.go	s/shardCount/1024/	TestVote_ShardCountFromPoll
+дубль -> 200	internal/httpapi/errors.go	s/StatusOK/http.StatusConflict/	TestFR4_SecondVoteSameTokenIsAlreadyCounted
+ballot только POST	internal/httpapi/router.go	s/Post("\/ballot"/Get("\/ballot"/	TestBallot_IsPOSTOnly
+IPv6 по /64	internal/httpapi/clientip.go	s/64/128/	TestNFR9_IPv6LimitedByPrefix
+доверенный XFF	internal/httpapi/clientip.go	s/trusted/!trusted/	TestNFR9_ForgedXFFIgnored
+джиттер TTL	internal/vote/caster.go	s/jitter/0.0 * jitter/	TestVote_TTLHasJitter
+GREATEST в снапшоте	internal/storage/postgres/results.go	s/GREATEST(poll_results.votes, excluded.votes)/excluded.votes/	TestNFR3_SnapshotIsMonotonic
+конфиг без I/O	internal/pollcfg/cache.go	s/c.snapshot.Load()/c.repo.ListActive(ctx)/	TestPollCfg_NoIOOnHotPath
+hmac.Equal	internal/ballot/issuer.go	s/hmac.Equal/bytes.Equal/	TestBallot_VerifyIsConstantTime
