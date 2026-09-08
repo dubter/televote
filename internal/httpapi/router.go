@@ -28,18 +28,9 @@ type RouterConfig struct {
 }
 
 // NewRouter собирает публичный и админский маршруты в один сервер.
-//
-// Порядок middleware важен: сначала выясняем адрес клиента, потом лимитируем и
-// фильтруем по нему. Обратный порядок лимитировал бы по адресу прокси, то есть
-// по одному ключу на весь трафик.
 func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, cfg RouterConfig) http.Handler {
 	r := chi.NewRouter()
 
-	// chi middleware.RealIP здесь НЕ используется намеренно: он переписывает
-	// RemoteAddr самым левым значением X-Forwarded-For независимо от того,
-	// ставит ли его наша инфраструктура (GHSA-3fxj-6jh8-hvhx). Запущенный
-	// перед нашим ClientIP, он бы уничтожил проверку доверенных прокси
-	// раньше, чем она успела бы отработать.
 	r.Use(otelchi.Middleware(cfg.ServiceName, otelchi.WithChiRoutes(r)))
 	r.Use(httpx.Recovery(nil))
 	r.Use(httpx.SecurityHeaders)
@@ -54,8 +45,6 @@ func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, 
 		}).Handler)
 	}
 
-	// Публичный приём. Лимит и ASN-фильтр только здесь: админку защищает
-	// аутентификация, а голосующий анонимен.
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Group(func(vote chi.Router) {
 			vote.Use(httpx.BlockDatacenterASN(cfg.DatacenterRanges))

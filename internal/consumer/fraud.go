@@ -16,10 +16,6 @@ import (
 )
 
 // Fraud считает агрегаты для поиска накрутки.
-//
-// Отдельная consumer group — в этом весь смысл: Kafka делит партиции между
-// членами одной группы, поэтому общая группа отбирала бы сообщения у подсчёта.
-// С разными группами отставание или падение анализа не трогает счёт голосов.
 type Fraud struct {
 	client *kgo.Client
 	redis  rueidis.Client
@@ -56,13 +52,9 @@ func fraudCurveKey(pollID uuid.UUID) string {
 // Signals — то, что видит оператор в админке.
 type Signals struct {
 	// ByNet — голосов на /16-подсеть. Показывает концентрацию, но не адрес.
-	ByNet map[string]int64 `json:"by_net"`
-	// ByUAClass — голосов на класс устройства. У подсети реального оператора
-	// классов десятки; у скрипта — единицы.
+	ByNet     map[string]int64 `json:"by_net"`
 	ByUAClass map[string]int64 `json:"by_ua_class"`
-	// Curve — голосов по секунде от начала окна. Человек даёт затухающий
-	// поток, скрипт — ровный или залповый.
-	Curve map[string]int64 `json:"curve"`
+	Curve     map[string]int64 `json:"curve"`
 }
 
 // Run читает топик и копит агрегаты до отмены контекста.
@@ -87,8 +79,6 @@ func (f *Fraud) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Ошибки записи агрегатов не останавливают чтение: анализ не имеет
-		// права влиять на дренаж, а пропуск части сигналов переживаем.
 		for _, resp := range f.redis.DoMulti(ctx, batch...) {
 			if err := resp.Error(); err != nil {
 				f.log.WarnContext(ctx, "fraud: запись агрегата", slog.String("error", err.Error()))

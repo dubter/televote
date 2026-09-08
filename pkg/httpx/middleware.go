@@ -24,7 +24,6 @@ func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Hand
 		window,
 		func(r *http.Request) (string, error) {
 			// Ключ считает LimitKey поверх адреса, который положил ClientIP:
-			// готовые key-функции httprate берут заголовки как есть.
 			return LimitKey(IPFromContext(r.Context())), nil
 		},
 		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
@@ -55,9 +54,6 @@ func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
 }
 
 // Recovery превращает панику в 500 и структурированную запись.
-//
-// Без неё паника на одном голосе роняет весь инстанс, а при 2M RPS это
-// заметная доля приёма.
 //
 //nolint:contextcheck // контекст берётся из самого запроса, он здесь и нужен
 func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
@@ -92,9 +88,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 }
 
 // writeError отдаёт отказ в том же формате, что и остальной API.
-//
-// Пакет не зависит от прикладного слоя намеренно: middleware обязано работать
-// и там, где обработчиков ещё нет — например, до монтирования роутера.
 func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

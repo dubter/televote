@@ -209,8 +209,6 @@ func TestCounting_UsesProducedAtNotProcessingTime(t *testing.T) {
 	applier := newFakeApplier()
 	c := newCounting(t, applier, cfg, &recordingObserver{})
 
-	// Голос принят на 59-й секунде окна, обрабатывается «сейчас», то есть
-	// заведомо после закрытия.
 	c.applyRecord(context.Background(), record(t, cfg, "late", []uint8{0}, closesAt.Add(-time.Second)))
 
 	_, ballots, _ := applier.snapshot()
@@ -323,7 +321,6 @@ func (l *lateLookup) ByID(id uuid.UUID) (*pollcfg.HotConfig, bool) {
 // Приём и подсчёт живут в разных процессах с независимыми кэшами конфигов.
 // Голос принят инстансом, который про опрос уже знал, а консьюмер мог ещё не
 // обновиться. Отбросить сообщение в этот момент — потерять голос навсегда:
-// оффсет будет закоммичен, и переиграть его уже нечем.
 func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
 	t.Parallel()
 

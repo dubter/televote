@@ -141,8 +141,6 @@ func runChecks(ctx context.Context, checkers []Checker) []error {
 	}
 	wg.Wait()
 
-	// Возвращаем все отказы: первая ошибка не должна скрывать остальные —
-	// иначе дежурный чинит Redis, не зная, что лежит ещё и Postgres.
 	failures := make([]error, 0, len(results))
 	for _, err := range results {
 		if err != nil {
@@ -153,8 +151,6 @@ func runChecks(ctx context.Context, checkers []Checker) []error {
 }
 
 func writeJSON(w http.ResponseWriter, status int, body healthResponse) {
-	// Тело сериализуем до WriteHeader: иначе отказ Marshal оставит клиенту
-	// 200 с обрезанным телом, а это худший из возможных ответов health-ручки.
 	payload, err := json.Marshal(body)
 	if err != nil {
 		payload, status = []byte(`{"status":"unavailable"}`), http.StatusServiceUnavailable

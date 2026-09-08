@@ -15,10 +15,6 @@ import (
 )
 
 // Result — исход применения голоса.
-//
-// Нулевого значения намеренно нет: провалившийся вызов возвращает Result(0), и
-// он не должен выглядеть успехом. Будь Counted нулём, `res, _ := Cast(...)`
-// с проигнорированной ошибкой читался бы как «голос посчитан».
 type Result uint8
 
 const (
@@ -74,10 +70,6 @@ func NewCaster(client rueidis.Client, ttl time.Duration, jitter float64) (*Caste
 	return &Caster{client: client, ttl: ttl, jitter: jitter}, nil
 }
 
-// keysFor выводит пару ключей шарда. shardCount берётся из аргумента, то есть
-// из строки опроса: возьми его Caster из глобального конфига, смена значения в
-// эфире сделала бы дедуп-ключи проголосовавших недостижимыми и открыла
-// повторное голосование без единой ошибки в логе.
 func (c *Caster) keysFor(pollID uuid.UUID, shardCount uint16, v VoterID) (dedup, counter string) {
 	shard := ShardFor(v, shardCount)
 	return DedupKey(pollID, shard, v), CounterKey(pollID, shard)
@@ -156,9 +148,6 @@ func validateCast(shardCount uint16, choices []uint8) error {
 }
 
 // Aggregate сворачивает счётчики всех шардов опроса в один агрегат.
-//
-// Читает с реплик: fan-in по тысячам ключей не должен делить мультиплекс с
-// записями консьюмеров и давать head-of-line blocking на дренаже.
 func (c *Caster) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uint16) (domain.Aggregate, error) {
 	if shardCount == 0 {
 		return domain.Aggregate{}, fmt.Errorf("%w: shardCount равен нулю", ErrInvalidArgs)

@@ -84,19 +84,10 @@ type Poll struct {
 	OpensAt    time.Time
 	ClosesAt   time.Time
 	// ShardCount фиксируется в строке опроса, а не берётся из конфига сервиса:
-	// смена значения в эфире перевела бы проголосовавших на другие шарды и
-	// открыла повторное голосование.
-	ShardCount uint16
-	// ResultsVisibleDuringVoting по умолчанию false: промежуточный счёт влияет
-	// на непроголосовавших и портит опрос.
+	ShardCount                 uint16
 	ResultsVisibleDuringVoting bool
-	// Salt — соль вывода voterID. Посекретная на опрос: она не даёт клиенту
-	// занять чужой дедуп-ключ и делает участие одного браузера в разных
-	// опросах несвязуемым.
-	Salt []byte
+	Salt                       []byte
 	// ExpectedAudience и ExpectedConversion задают ожидаемую нагрузку эфира:
-	// из них выводится ёмкость. Пер-опрос, потому что конверсия в ТЗ не
-	// задана и допущение обязано быть параметром, а не константой в коде.
 	ExpectedAudience   int64
 	ExpectedConversion float64
 	// Version — optimistic locking, чтобы два админа не затёрли правки друг друга.
@@ -114,12 +105,8 @@ func (p *Poll) OptionCount() uint8 {
 
 // Число шардов дедупа и счётчиков.
 const (
-	// Перекос между мастерами равен 1/√(шардов на мастера): 500 держат его
-	// в пределах ±4.5 %.
 	ShardsPerMaster = 500
 
-	// MaxShardCount равен числу слотов Redis Cluster: дальше раскладка не
-	// улучшается, а fan-in растёт линейно.
 	MaxShardCount = 16384
 )
 

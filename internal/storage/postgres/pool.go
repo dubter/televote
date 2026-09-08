@@ -16,8 +16,6 @@ import (
 // Ошибки адаптера. Сравнивать только через errors.Is: репозитории оставляют за
 // собой право обернуть сентинел деталями запроса.
 var (
-	// ErrSlugTaken — слаг занят. Уникальность обеспечивает БД, а не пара
-	// SELECT+INSERT: между ними успевает вклиниться второй админ.
 	ErrSlugTaken = errors.New("slug_taken")
 
 	// ErrVersionConflict — строку изменили между чтением и записью.
@@ -35,10 +33,6 @@ const (
 )
 
 // Option настраивает пул поверх параметров DSN.
-//
-// Вариативный параметр, а не отдельный конструктор: NewPool(ctx, dsn) остаётся
-// корректным вызовом, а размер пула приезжает из конфига сервиса (POSTGRES_MAX_CONNS),
-// который знает про роль процесса — у приёма и у консьюмера она разная.
 type Option func(*pgxpool.Config)
 
 // WithMaxConns задаёт размер пула. Значение ≤ 0 игнорируется: ноль соединений
@@ -64,8 +58,6 @@ func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, er
 	}
 
 	// Параметры из DSN имеют приоритет над дефолтом, а Option — над DSN:
-	// DSN описывает, куда подключаться, конфиг сервиса — сколько соединений
-	// нужно этой роли процесса.
 	if cfg.MaxConns == 0 {
 		cfg.MaxConns = defaultMaxConns
 	}
@@ -73,8 +65,6 @@ func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, er
 		opt(cfg)
 	}
 	if cfg.MinConns == 0 && cfg.MaxConns >= 2 {
-		// Пара тёплых соединений: рефрешер конфига ходит раз в 2 с, и открывать
-		// соединение заново на каждый тик — лишняя задержка на пустом месте.
 		cfg.MinConns = 2
 	}
 

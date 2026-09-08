@@ -1,7 +1,4 @@
 // Package auth отвечает за доступ к админке: пароли, токены и роли.
-//
-// Голосующий здесь не участвует: голосование анонимно и аутентификации не
-// требует. Всё, что в этом пакете, относится к control plane.
 package auth
 
 import (
@@ -30,10 +27,6 @@ var (
 const minKeyLen = 32
 
 // HashPassword считает argon2id-хэш.
-//
-// argon2id намеренно дорог по CPU и памяти — именно это делает перебор
-// нерентабельным. Обратная сторона: без лимита попыток эндпоинт логина
-// становится усилителем DoS, поэтому LoginLimiter здесь не опция.
 func HashPassword(plain string) (string, error) {
 	hash, err := argon2id.CreateHash(plain, argon2id.DefaultParams)
 	if err != nil {
@@ -100,9 +93,6 @@ func (c *Claims) UserID() (uuid.UUID, error) {
 }
 
 // TokenService выдаёт и проверяет админские токены.
-//
-// Токен живёт в заголовке Authorization, а не в cookie: браузер не отправляет
-// его автоматически, и вопрос CSRF в админке не возникает вовсе.
 type TokenService struct {
 	key []byte
 	ttl time.Duration
@@ -144,9 +134,6 @@ func (t *TokenService) Issue(userID uuid.UUID, role Role) (string, error) {
 }
 
 // Parse проверяет токен.
-//
-// Метод подписи проверяется явно: без этого токен с alg=none принимается как
-// валидный, и админом становится кто угодно.
 func (t *TokenService) Parse(raw string) (*Claims, error) {
 	var claims Claims
 
@@ -169,10 +156,6 @@ func (t *TokenService) Parse(raw string) (*Claims, error) {
 }
 
 // LoginLimiter ограничивает попытки входа по логину.
-//
-// Нужен именно из-за argon2id: проверка пароля стоит десятки миллисекунд CPU и
-// десятки мегабайт памяти, поэтому незащищённый логин — это готовый усилитель
-// отказа в обслуживании, даже без единого угаданного пароля.
 type LoginLimiter struct {
 	mu       sync.Mutex
 	attempts map[string]*attempt
@@ -215,8 +198,6 @@ func (l *LoginLimiter) Allow(login string) bool {
 	now := l.now()
 	a, ok := l.attempts[login]
 	if !ok || now.After(a.until) {
-		// Таблица ограничена сверху: логин выбирает клиент, и без потолка
-		// перебор несуществующих логинов съел бы память процесса.
 		if len(l.attempts) >= l.maxKeys {
 			l.evictExpiredLocked(now)
 		}
@@ -242,7 +223,6 @@ func (l *LoginLimiter) evictExpiredLocked(now time.Time) {
 		}
 	}
 	// Если протухших не нашлось, таблица всё равно не растёт: чистим целиком.
-	// Потеря счётчиков хуже перебора, но лучше исчерпания памяти.
 	if len(l.attempts) >= l.maxKeys {
 		clear(l.attempts)
 	}

@@ -23,9 +23,6 @@ import (
 )
 
 // selfHealthcheck дёргает /readyz собственного процесса.
-//
-// Нужен, потому что образ distroless: ни curl, ни wget, ни shell в нём нет,
-// а healthcheck контейнера должен чем-то проверять готовность.
 func selfHealthcheck() int {
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
@@ -35,9 +32,6 @@ func selfHealthcheck() int {
 		addr = "127.0.0.1" + addr
 	}
 
-	// Адрес собственного слушателя, а не пользовательский ввод: G704 здесь
-	// ложное срабатывание, но запрос всё равно строится через NewRequest
-	// с контекстом, чтобы не висеть дольше таймаута healthcheck контейнера.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -82,9 +76,6 @@ func netDialer(timeout time.Duration) net.Dialer {
 }
 
 // kafkaLag сообщает снапшотеру, сколько сообщений ещё не обработано.
-//
-// Ноль — это критерий финализации, а не таймаут: он означает, что все
-// принятые голоса доехали до Redis и результат можно фиксировать.
 type kafkaLag struct {
 	client *kgo.Client
 	topic  string
@@ -120,10 +111,6 @@ func (k kafkaLag) Lag(ctx context.Context) (int64, error) {
 }
 
 // datacenterRanges читает список датацентровых сетей.
-//
-// Отсутствие файла — не ошибка старта: фильтр это дополнительный слой, и
-// падать из-за него в момент эфира было бы хуже, чем работать без него.
-// Но молчать нельзя, поэтому отсутствие попадает в лог.
 func (a *app) datacenterRanges() []netip.Prefix {
 	if !a.cfg.ASNBlockEnabled {
 		return nil

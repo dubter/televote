@@ -28,20 +28,19 @@ const (
 // Пустая строка не годится: env-библиотека подставляет вместо неё envDefault.
 const debugDisabled = "off"
 
-// ballotKeySize — размер ключа HMAC для ballot-токенов, байт.
-const ballotKeySize = 32
+// minSecretLen — размер ключа HMAC для ballot-токенов, байт.
+const minSecretLen = 32
 
 var (
 	// ErrInvalidConfig — зонтичная ошибка: её оборачивает любой отказ валидации.
 	ErrInvalidConfig = errors.New("некорректная конфигурация")
 
-	// ErrInsecureDefault — в production остался секрет из .env.example либо
-	// ключ не дотягивает до требований к продовому секрету.
+	// ErrInsecureDefault — секрет остался дефолтным из .env.example.
 	ErrInsecureDefault = errors.New("небезопасный секрет: дефолт из .env.example или слабый ключ")
 
-	// ErrDedupTTLTooShort — первый пункт таблицы тихих отказов в CLAUDE.md:
-	// ключ дедупа, истекающий раньше токена, открывает окно для replay.
-	ErrDedupTTLTooShort = errors.New("ttl дедупа короче времени жизни ballot-токена")
+	// ErrDedupTTLTooShort — дедуп-ключ истечёт раньше конца дренажа, и
+	// повторный голос того же человека будет засчитан.
+	ErrDedupTTLTooShort = errors.New("ttl дедупа короче окна дренажа")
 )
 
 // FieldError связывает отказ валидации с именем переменной окружения:
@@ -68,16 +67,12 @@ func (e *FieldError) Unwrap() []error {
 // Config — вся конфигурация сервиса. Одна плоская структура: поля читают
 // параллельные пакеты, вложенность здесь только добавила бы им работы.
 type Config struct {
-	// ─── общее ───
 	Env      string `env:"ENV" envDefault:"dev"`
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 
-	// ─── HTTP ───
 	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
 	// DebugAddr — pprof. "off" выключает его целиком.
-	DebugAddr string `env:"DEBUG_ADDR" envDefault:"127.0.0.1:6060"`
-	// ReadHeaderTimeout защищает от Slowloris: без него соединение,
-	// отдающее заголовок по байту в минуту, живёт вечно.
+	DebugAddr         string        `env:"DEBUG_ADDR" envDefault:"127.0.0.1:6060"`
 	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"3s"`
 	ReadTimeout       time.Duration `env:"READ_TIMEOUT" envDefault:"5s"`
 	WriteTimeout      time.Duration `env:"WRITE_TIMEOUT" envDefault:"10s"`
@@ -85,33 +80,23 @@ type Config struct {
 	ShutdownGrace     time.Duration `env:"SHUTDOWN_GRACE" envDefault:"25s"`
 	MaxBodyBytes      int64         `env:"MAX_BODY_BYTES" envDefault:"1024"`
 
-	// ─── Redis Cluster ───
-	RedisAddrs       []string      `env:"REDIS_ADDRS" envSeparator:","`
-	RedisDialTimeout time.Duration `env:"REDIS_DIAL_TIMEOUT" envDefault:"2s"`
-	RedisCmdTimeout  time.Duration `env:"REDIS_CMD_TIMEOUT" envDefault:"250ms"`
-	// VoteRetryBudget — бюджет синхронного ретрая голоса. Длиннее — копим
-	// соединения и умираем сами; голос хранит браузер, а не сервер.
+	RedisAddrs        []string      `env:"REDIS_ADDRS" envSeparator:","`
+	RedisDialTimeout  time.Duration `env:"REDIS_DIAL_TIMEOUT" envDefault:"2s"`
+	RedisCmdTimeout   time.Duration `env:"REDIS_CMD_TIMEOUT" envDefault:"250ms"`
 	VoteRetryBudget   time.Duration `env:"VOTE_RETRY_BUDGET" envDefault:"250ms"`
 	BreakerErrorRatio float64       `env:"BREAKER_ERROR_RATIO" envDefault:"0.5"`
 	BreakerWindow     time.Duration `env:"BREAKER_WINDOW" envDefault:"5s"`
 
-	// ─── Postgres ───
 	PostgresDSN string `env:"POSTGRES_DSN"`
 	// PostgresReadDSN — реплика для конфига опросов. Пустой — читаем с primary.
 	PostgresReadDSN  string `env:"POSTGRES_READ_DSN"`
 	PostgresMaxConns int32  `env:"POSTGRES_MAX_CONNS" envDefault:"20"`
 
-	// ─── кэш конфига опроса ───
-	// Фоновый рефрешер, а не ленивый TTL: истечение при 2M RPS даёт
-	// thundering herd из тысяч одновременных промахов.
 	PollConfigRefresh time.Duration `env:"POLL_CONFIG_REFRESH" envDefault:"2s"`
 
 	// PollMinLeadTime — насколько заранее обязан создаваться опрос.
 	PollMinLeadTime time.Duration `env:"POLL_MIN_LEAD_TIME" envDefault:"1h"`
 
-	// ─── ballot-токены ───
-	// Два ключа: подписываем текущим, проверяем обоими. Иначе ротация в эфире
-	// инвалидирует все выданные токены разом.
 	KafkaBrokers        []string      `env:"KAFKA_BROKERS" envSeparator:","`
 	KafkaTopic          string        `env:"KAFKA_TOPIC" envDefault:"votes"`
 	KafkaConsumerGroup  string        `env:"KAFKA_CONSUMER_GROUP" envDefault:"televote-counting"`
@@ -119,48 +104,36 @@ type Config struct {
 	KafkaLinger         time.Duration `env:"KAFKA_LINGER" envDefault:"5ms"`
 	KafkaProduceTimeout time.Duration `env:"KAFKA_PRODUCE_TIMEOUT" envDefault:"2s"`
 
-	// ─── дедупликация ───
 	DedupTTL time.Duration `env:"DEDUP_TTL" envDefault:"30m"`
 	// DedupTTLJitter — разброс TTL. Без него 30 млн ключей истекут разом.
 	DedupTTLJitter float64 `env:"DEDUP_TTL_JITTER" envDefault:"0.1"`
 
-	// ─── rate limit ───
 	RateLimitPerMin  int `env:"RATE_LIMIT_PER_MIN" envDefault:"6000"`
 	RateLimitBurst   int `env:"RATE_LIMIT_BURST" envDefault:"200"`
 	RateLimitMaxKeys int `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
 	// TrustedProxies — X-Forwarded-For принимается только от этих адресов.
-	// Иначе лимит обходится одной строкой в curl.
 	TrustedProxies []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
 
-	// ─── антинакрутка ───
 	ASNBlocklistPath  string  `env:"ASN_BLOCKLIST_PATH" envDefault:"/etc/televote/datacenter-ranges.txt"`
 	ASNBlockEnabled   bool    `env:"ASN_BLOCK_ENABLED" envDefault:"true"`
 	AnomalySampleRate float64 `env:"ANOMALY_SAMPLE_RATE" envDefault:"0.01"`
 
-	// ─── админка ───
 	AdminJWTKey            string        `env:"ADMIN_JWT_KEY"`
 	AdminJWTTTL            time.Duration `env:"ADMIN_JWT_TTL" envDefault:"30m"`
 	AdminBootstrapLogin    string        `env:"ADMIN_BOOTSTRAP_LOGIN" envDefault:"admin"`
 	AdminBootstrapPassword string        `env:"ADMIN_BOOTSTRAP_PASSWORD"`
 
-	// ─── снапшоты ───
-	SnapshotInterval time.Duration `env:"SNAPSHOT_INTERVAL" envDefault:"5s"`
-	// SnapshotFinalGrace — задержка перед финальным снапшотом, иначе теряется
-	// хвост голосов в полёте.
+	SnapshotInterval   time.Duration `env:"SNAPSHOT_INTERVAL" envDefault:"5s"`
 	SnapshotFinalGrace time.Duration `env:"SNAPSHOT_FINAL_GRACE" envDefault:"30s"`
 
 	// DrainWindow — за сколько мы согласны досчитать голоса после эфира.
-	// Главный рычаг «стоимость против задержки результата»: из него выводится
-	// число мастеров Redis и консьюмеров.
 	DrainWindow time.Duration `env:"DRAIN_WINDOW" envDefault:"5m"`
 
-	// ─── наблюдаемость ───
 	OTLPEndpoint     string  `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:"http://otel-lgtm:4317"`
 	OTelServiceName  string  `env:"OTEL_SERVICE_NAME" envDefault:"televote"`
 	TraceSampleRatio float64 `env:"OTEL_TRACE_SAMPLE_RATIO" envDefault:"0.0001"`
 	SentryDSN        string  `env:"SENTRY_DSN"`
 
-	// ─── публичный адрес ───
 	PublicBaseURL string `env:"PUBLIC_BASE_URL" envDefault:"http://localhost:8080"`
 }
 
@@ -173,8 +146,6 @@ func Load() (*Config, error) {
 // сервиса в стенд получают детерминированный конфиг без глобального окружения.
 func LoadFrom(environ map[string]string) (*Config, error) {
 	if environ == nil {
-		// nil означал бы для env-библиотеки «возьми os.Environ()»,
-		// а вызвавший LoadFrom(nil) просил ровно обратного.
 		environ = map[string]string{}
 	}
 
@@ -184,7 +155,6 @@ func LoadFrom(environ map[string]string) (*Config, error) {
 	}
 
 	// Реплика необязательна: без неё конфиг опросов читается с primary.
-	// Пустая строка здесь означала бы пул без адреса и падение при первом чтении.
 	if cfg.PostgresReadDSN == "" {
 		cfg.PostgresReadDSN = cfg.PostgresDSN
 	}
@@ -237,10 +207,6 @@ func (c *Config) DedupTTLLowerBound() time.Duration {
 }
 
 // DrainBudget — сколько времени отводится на дренаж, с запасом.
-//
-// Дедуп-ключ создаёт консьюмер, а не приём: два сообщения одного человека
-// могут быть обработаны в начале и в конце дренажа, и ключ обязан пережить
-// этот разрыв. Иначе второй голос будет засчитан как первый.
 func (c *Config) DrainBudget() time.Duration {
 	return c.SnapshotFinalGrace + drainSafetyMargin
 }
@@ -268,7 +234,6 @@ func (c *Config) validate() error {
 		fail("LOG_LEVEL", "ожидается один из debug|info|warn|error, получено %q", c.LogLevel)
 	}
 
-	// ─── HTTP ───
 	if c.HTTPAddr == "" {
 		fail("HTTP_ADDR", "обязателен")
 	}
@@ -300,7 +265,6 @@ func (c *Config) validate() error {
 		}
 	}
 
-	// ─── Redis ───
 	if len(c.RedisAddrs) == 0 {
 		fail("REDIS_ADDRS", "обязателен: адреса нод кластера через запятую")
 	}
@@ -330,7 +294,6 @@ func (c *Config) validate() error {
 		fail("BREAKER_WINDOW", "должно быть положительным")
 	}
 
-	// ─── Postgres ───
 	if c.PostgresDSN == "" {
 		fail("POSTGRES_DSN", "обязателен")
 	}
@@ -348,7 +311,6 @@ func (c *Config) validate() error {
 		fail("POLL_CONFIG_REFRESH", "должен быть положительным: горячий путь читает только память")
 	}
 
-	// ─── Kafka ───
 	if len(c.KafkaBrokers) == 0 {
 		fail("KAFKA_BROKERS", "нужен хотя бы один брокер: приём голосов идёт только через Kafka")
 	}
@@ -363,7 +325,6 @@ func (c *Config) validate() error {
 			"совпадает с группой подсчёта: анализ обязан читать топик независимо, иначе он крадёт сообщения у подсчёта")
 	}
 
-	// ─── дедуп ───
 	if c.DedupTTL <= 0 {
 		fail("DEDUP_TTL", "должен быть положительным")
 	}
@@ -371,7 +332,6 @@ func (c *Config) validate() error {
 		fail("DEDUP_TTL_JITTER", "ожидается доля в [0,0.5], получено %v", c.DedupTTLJitter)
 	}
 
-	// ─── rate limit ───
 	if c.RateLimitPerMin <= 0 {
 		fail("RATE_LIMIT_PER_MIN", "должен быть положительным")
 	}
@@ -382,7 +342,6 @@ func (c *Config) validate() error {
 		fail("RATE_LIMIT_MAX_KEYS", "должен быть положительным: таблица лимитера обязана быть ограничена")
 	}
 
-	// ─── антинакрутка и наблюдаемость ───
 	if c.ASNBlockEnabled && c.ASNBlocklistPath == "" {
 		fail("ASN_BLOCKLIST_PATH", "обязателен при ASN_BLOCK_ENABLED=true")
 	}
@@ -396,7 +355,6 @@ func (c *Config) validate() error {
 		fail("OTEL_SERVICE_NAME", "обязателен")
 	}
 
-	// ─── админка и снапшоты ───
 	if c.AdminJWTTTL <= 0 {
 		fail("ADMIN_JWT_TTL", "должен быть положительным")
 	}
@@ -423,10 +381,6 @@ func (c *Config) validate() error {
 }
 
 // validateDedupInvariant — инвариант ttl(dedup) ≥ exp(token) + skew.
-//
-// Проверяется по нижней границе джиттера, а не по номиналу: DEDUP_TTL=16m при
-// джиттере 0.1 даёт ключи, живущие 14.4 минуты, тогда как токен принимается
-// 16 минут — и полутора минут хватает, чтобы переголосовать тем же токеном.
 func (c *Config) validateDedupInvariant() error {
 	if c.DedupTTL <= 0 || c.SnapshotFinalGrace <= 0 {
 		return nil // о нулевых значениях уже сообщено отдельно
@@ -464,8 +418,8 @@ func (c *Config) validateProductionSecrets() []error {
 		insecure("ADMIN_JWT_KEY", "обязателен в production")
 	case isPlaceholderSecret(c.AdminJWTKey):
 		insecure("ADMIN_JWT_KEY", "оставлен дефолт из .env.example")
-	case len(c.AdminJWTKey) < ballotKeySize:
-		insecure("ADMIN_JWT_KEY", "короче %d символов", ballotKeySize)
+	case len(c.AdminJWTKey) < minSecretLen:
+		insecure("ADMIN_JWT_KEY", "короче %d символов", minSecretLen)
 	}
 
 	switch {
@@ -484,16 +438,12 @@ func (c *Config) validateProductionSecrets() []error {
 		}
 	}
 
-	// Джиттер обязателен: 30 млн ключей с одинаковым сроком истекут разом
-	// и добьют Redis ровно на хвосте эфира.
 	if c.DedupTTLJitter <= 0 {
 		insecure("DEDUP_TTL_JITTER", "должен быть положительным в production")
 	}
 
 	return errs
 }
-
-// ─── helpers ───
 
 func validateDebugAddr(addr string, production bool) error {
 	host, _, err := net.SplitHostPort(addr)
@@ -504,7 +454,6 @@ func validateDebugAddr(addr string, production bool) error {
 		return nil
 	}
 	// pprof, открытый наружу, — это дамп памяти процесса по HTTP.
-	// В памяти лежат ballot-токены и ключи подписи.
 	if host == "" {
 		return errors.New(`в production pprof обязан слушать loopback; "" означает все интерфейсы — используйте 127.0.0.1 или off`)
 	}

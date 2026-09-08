@@ -16,10 +16,6 @@ const (
 )
 
 // HashTag — общая часть ключей одного шарда, без фигурных скобок.
-//
-// Redis Cluster считает слот по содержимому первого непустого {...}, поэтому
-// общий тег кладёт дедуп-маркер и счётчик в один слот. Без этого EVALSHA
-// вернёт CROSSSLOT, и голос не будет ни посчитан, ни отвергнут — он пропадёт.
 func HashTag(pollID uuid.UUID, shard uint16) string {
 	var b strings.Builder
 	b.Grow(2 + 36 + 2 + 5)
@@ -55,10 +51,6 @@ func CounterKey(pollID uuid.UUID, shard uint16) string {
 }
 
 // ShardFor выбирает шард по идентификатору голосующего.
-//
-// Ключ шардирования не выбирается свободно: дедуп-маркер привязан к voterID,
-// а атомарность требует счётчик в том же слоте. Равномерность даёт HMAC.
-// Нулевой shardCount не роняет процесс: деление на ноль остановило бы дренаж.
 func ShardFor(v VoterID, shardCount uint16) uint16 {
 	if shardCount == 0 {
 		return 0

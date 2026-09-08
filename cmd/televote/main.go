@@ -1,7 +1,4 @@
 // Команда televote — HTTP-сервис анонимного голосования.
-//
-// Здесь только сборка: чтение конфига, логгер, health, HTTP-сервер с полным
-// набором таймаутов и graceful shutdown. Бизнес-логика живёт в internal/.
 package main
 
 import (
@@ -31,9 +28,6 @@ var version = "dev"
 var (
 	roleFlag = flag.String("role", string(roleAll), "роль процесса: api | consumer | all")
 
-	// healthFlag превращает бинарь в собственный healthcheck: образ
-	// distroless, в нём нет ни shell, ни curl, и проверять готовность
-	// контейнера больше нечем.
 	healthFlag = flag.Bool("healthcheck", false, "проверить /readyz локального процесса и выйти")
 )
 
@@ -45,8 +39,6 @@ func main() {
 	}
 
 	if err := run(context.Background()); err != nil {
-		// Логгер к этому моменту может быть ещё не настроен — стандартного хватит,
-		// важно, чтобы причина отказа старта дошла до stderr целиком.
 		slog.Error("сервис остановлен с ошибкой", slog.Any("error", err))
 		os.Exit(1)
 	}
@@ -61,8 +53,6 @@ func run(ctx context.Context) error {
 	logger := newLogger(cfg)
 	slog.SetDefault(logger)
 
-	// Обе величины инварианта дедупликации печатаются при старте: нарушение
-	// уже поймано конфигом, но дежурному нужно видеть запас, а не верить на слово.
 	logger.Info("старт",
 		slog.String("http_addr", cfg.HTTPAddr),
 		slog.Int("redis_nodes", len(cfg.RedisAddrs)),
@@ -74,8 +64,6 @@ func run(ctx context.Context) error {
 		logger.Warn("используются дефолтные секреты из .env.example: годится только для стенда")
 	}
 
-	// Готовность снимается до Shutdown, чтобы балансировщик увёл трафик раньше,
-	// чем сервер начнёт закрывать соединения.
 	gate := health.NewGate()
 
 	application, err := buildApp(ctx, cfg, logger, role(*roleFlag))
@@ -84,8 +72,6 @@ func run(ctx context.Context) error {
 	}
 	defer application.Close() //nolint:contextcheck // дренаж по собственному сроку
 
-	// Health обязан работать, даже когда всё остальное сломано, поэтому висит
-	// на корневом mux до и независимо от прикладного роутера.
 	healthHandler := health.Handler(nil, append(application.readiness(), gate.Checker()))
 
 	mux := http.NewServeMux()
@@ -102,8 +88,6 @@ func run(ctx context.Context) error {
 
 	srv := newServer(ctx, cfg, logger, cfg.HTTPAddr, mux)
 
-	// Сигнал отменяет отдельный контекст, а не корневой: запросы в полёте
-	// обязаны дожить до конца, их дренирует Shutdown, а не отмена контекста.
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -121,8 +105,6 @@ func run(ctx context.Context) error {
 		}()
 	}
 
-	// Кэш конфигов прогрет внутри buildApp — до этой точки инстанс трафика
-	// не получает.
 	application.runBackground(sigCtx)
 
 	gate.SetReady(true)
@@ -134,8 +116,6 @@ func run(ctx context.Context) error {
 	case <-sigCtx.Done():
 	}
 
-	// Второй сигнал вернёт поведение по умолчанию и убьёт процесс: зависший
-	// shutdown не должен требовать SIGKILL вручную.
 	stop()
 
 	logger.Info("получен сигнал остановки, снимаем готовность", slog.String("grace", cfg.ShutdownGrace.String()))
@@ -165,10 +145,6 @@ func run(ctx context.Context) error {
 }
 
 // newServer собирает http.Server со всеми таймаутами.
-//
-// ReadHeaderTimeout здесь не для галочки: без него соединение, отдающее
-// заголовки по байту в минуту, живёт вечно, и тысяча таких соединений
-// выбирает лимит файловых дескрипторов (Slowloris).
 func newServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, addr string, h http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,

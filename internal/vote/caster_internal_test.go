@@ -1,10 +1,6 @@
 package vote
 
 // Тесты внутренностей Caster: вывод ключей и TTL проверяются без Redis.
-//
-// Это сознательно юниты, а не integration. scripts/invariants.tsv ломает
-// caster.go и ждёт красного от `go test` БЕЗ тега integration: тест инварианта,
-// доступный только с Docker, инвариант не защищает.
 
 import (
 	"fmt"
@@ -36,15 +32,9 @@ func testVoters(tb testing.TB, n int) []VoterID {
 func testCaster(tb testing.TB, ttl time.Duration, jitter float64) *Caster {
 	tb.Helper()
 
-	// Клиент не нужен: keysFor и ttlSecondsFor до сети не доходят, а NewCaster
-	// справедливо отвергает nil-клиент.
 	return &Caster{ttl: ttl, jitter: jitter}
 }
 
-// Инвариант из CLAUDE.md: shard_count берётся из строки опроса. Если бы Caster
-// брал его из глобального конфига, смена значения в эфире перевела бы уже
-// проголосовавших на другие шарды — их дедуп-ключи стали бы недостижимы, и
-// повторное голосование открылось бы молча, без единой ошибки в логе.
 func TestVote_ShardCountFromPoll(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +64,6 @@ func TestVote_ShardCountFromPoll(t *testing.T) {
 		})
 	}
 
-	// Разное число шардов обязано давать разные ключи хотя бы части
-	// голосующих: одинаковый результат означал бы, что аргумент проигнорирован.
 	moved := 0
 	for _, v := range voters {
 		a, _ := c.keysFor(internalPollID, 500, v)
@@ -115,14 +103,10 @@ func TestVote_TTLHasJitter(t *testing.T) {
 		maxSeen = max(maxSeen, got)
 	}
 
-	// Разброс, а не пара значений вокруг номинала: истечение обязано
-	// размазаться по всему окну ±10 %.
 	assert.Greater(t, len(distinct), 100, "TTL принимает слишком мало значений")
 	assert.Less(t, minSeen, int64(base*(1-jitter/2)), "нижняя половина окна не задействована")
 	assert.Greater(t, maxSeen, int64(base*(1+jitter/2)), "верхняя половина окна не задействована")
 
-	// Нулевой джиттер отключает разброс — тогда конфиг честно говорит, что
-	// лавина истечения разрешена, и это видно в тесте, а не только в проде.
 	fixed := testCaster(t, testTTL, 0)
 	for _, v := range voters[:100] {
 		assert.Equal(t, int64(base), fixed.ttlSecondsFor(v))

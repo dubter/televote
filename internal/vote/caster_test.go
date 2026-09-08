@@ -30,8 +30,6 @@ func TestResult_ZeroValueIsNotSuccess(t *testing.T) {
 	assert.True(t, vote.ResultCounted.Valid())
 	assert.True(t, vote.ResultAlreadyCounted.Valid())
 
-	// String() уходит в метку метрики, поэтому набор значений конечен и не
-	// содержит ничего пользовательского (NFR-7).
 	assert.Equal(t, "counted", vote.ResultCounted.String())
 	assert.Equal(t, "already_counted", vote.ResultAlreadyCounted.String())
 	assert.Equal(t, "invalid", zero.String())
@@ -77,8 +75,6 @@ func TestNewCaster_RejectsBrokenDependencies(t *testing.T) {
 func TestCast_RejectsInvalidArgumentsBeforeRedis(t *testing.T) {
 	t.Parallel()
 
-	// Клиент заведомо мёртвый: если проверка аргументов работает, до него не
-	// дойдёт, а ошибка окажется неретраябельной.
 	c, err := vote.NewCaster(struct{ rueidis.Client }{}, 30*time.Minute, 0.1)
 	require.NoError(t, err)
 

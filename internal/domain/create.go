@@ -29,9 +29,6 @@ type PollSpec struct {
 const MinOptions = 2
 
 // NewPoll собирает опрос из спецификации, проверяя правила предметной области.
-//
-// Проверки живут здесь, а не в HTTP-обработчике: тогда правила одинаковы для
-// любого способа создать опрос и покрываются юнит-тестом без сервера.
 func NewPoll(spec PollSpec, now time.Time, minLeadTime time.Duration) (*Poll, error) {
 	if err := spec.validate(now, minLeadTime); err != nil {
 		return nil, err
@@ -121,9 +118,6 @@ func (s PollSpec) validate(now time.Time, minLeadTime time.Duration) error {
 }
 
 // ExpectedVotes — ожидаемое число голосов: аудитория × конверсия.
-//
-// Именно эта величина определяет ёмкость: приём масштабируется под голоса,
-// а не под зрителей.
 func (p *Poll) ExpectedVotes() int64 {
 	v := float64(p.ExpectedAudience) * p.ExpectedConversion
 	switch {

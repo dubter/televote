@@ -77,18 +77,15 @@ func (h *PublicHandler) Routes() chi.Router {
 
 // pollConfigResponse — то, что видит страница голосования.
 type pollConfigResponse struct {
-	Slug     string   `json:"slug"`
-	Question string   `json:"question"`
-	Options  []string `json:"options"`
-	Type     string   `json:"type"`
-	Min      uint8    `json:"min_choices"`
-	Max      uint8    `json:"max_choices"`
-	OpensAt  string   `json:"opens_at"`
-	ClosesAt string   `json:"closes_at"`
-	// ServerTime нужен клиенту, чтобы работать по нашему времени: у зрителя
-	// часы могут врать, и без этого он либо не сможет проголосовать, либо
-	// попробует до открытия.
-	ServerTime string `json:"server_time"`
+	Slug       string   `json:"slug"`
+	Question   string   `json:"question"`
+	Options    []string `json:"options"`
+	Type       string   `json:"type"`
+	Min        uint8    `json:"min_choices"`
+	Max        uint8    `json:"max_choices"`
+	OpensAt    string   `json:"opens_at"`
+	ClosesAt   string   `json:"closes_at"`
+	ServerTime string   `json:"server_time"`
 }
 
 func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
@@ -104,8 +101,6 @@ func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Конфиг одинаков для всех 30 млн зрителей, поэтому кэшируется на CDN.
-	// Без этого 30 млн запросов за одним и тем же JSON придут на бэкенд и
-	// убьют его раньше, чем голоса.
 	w.Header().Set("Cache-Control", "public, max-age=10")
 
 	writeJSON(w, http.StatusOK, pollConfigResponse{
@@ -128,10 +123,6 @@ type voteRequest struct {
 }
 
 // voteResponse — ответ приёма.
-//
-// Статус accepted, а не counted: голос принят к обработке, а посчитает его
-// консьюмер. Ответить «посчитан» за то, что ещё лежит в Kafka, — это соврать
-// клиенту, и на этом мы уже обжигались с серверным буфером.
 type voteResponse struct {
 	Status string `json:"status"`
 }
@@ -184,7 +175,6 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Kafka недоступна — единственный отказ, видимый клиенту.
-	// Честный 503, а не 202 за голос, которого никто не принял.
 	start := h.now()
 	if err := h.sink.Send(r.Context(), msg); err != nil {
 		h.obs.VoteRejected(reasonUnavailable)

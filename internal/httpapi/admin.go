@@ -49,9 +49,6 @@ type AdminHandler struct {
 	limiter *auth.LoginLimiter
 	now     func() time.Time
 
-	// minLeadTime — насколько заранее обязан создаваться опрос: ёмкость под
-	// эфир поднимается по расписанию и раньше просто не успеет. На стенде
-	// ёмкость уже поднята, поэтому там значение нулевое.
 	minLeadTime time.Duration
 }
 
@@ -145,9 +142,6 @@ type loginResponse struct {
 }
 
 // login выдаёт токен.
-//
-// Ответ на неверный логин и на неверный пароль одинаков: разные ответы
-// подсказали бы перебору, какие логины существуют.
 func (h *AdminHandler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
@@ -155,8 +149,6 @@ func (h *AdminHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Лимит до проверки пароля: argon2id стоит десятки миллисекунд CPU и
-	// десятки мегабайт, и без лимита логин становится усилителем DoS.
 	if !h.limiter.Allow(req.Login) {
 		w.Header().Set("Retry-After", "60")
 		WriteError(w, r, errUnauthorized)
@@ -291,10 +283,6 @@ func (h *AdminHandler) closePoll(w http.ResponseWriter, r *http.Request) {
 }
 
 // transition переводит опрос в новый статус через доменный FSM.
-//
-// Проверка идёт по автомату, а не по сравнению дат: вычисляемый статус зависел
-// бы от часов машины, и опрос на инстансе с уехавшим временем принимал бы
-// голоса вне эфира.
 func (h *AdminHandler) transition(w http.ResponseWriter, r *http.Request, to domain.Status, action string) {
 	slug := chi.URLParam(r, "slug")
 
@@ -325,14 +313,12 @@ type optionResult struct {
 }
 
 type resultsResponse struct {
-	Slug    string         `json:"slug"`
-	Status  string         `json:"status"`
-	Ballots int64          `json:"ballots"`
-	Options []optionResult `json:"options"`
-	// Final отличает промежуточный подсчёт от итогового: пока идёт дренаж,
-	// цифры ещё растут, и админ обязан это видеть.
-	Final        bool     `json:"final"`
-	ExcludedNets []string `json:"excluded_nets,omitempty"`
+	Slug         string         `json:"slug"`
+	Status       string         `json:"status"`
+	Ballots      int64          `json:"ballots"`
+	Options      []optionResult `json:"options"`
+	Final        bool           `json:"final"`
+	ExcludedNets []string       `json:"excluded_nets,omitempty"`
 }
 
 func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
@@ -361,12 +347,9 @@ func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
 	options := make([]optionResult, 0, len(poll.Options))
 	for _, o := range poll.Options {
 		options = append(options, optionResult{
-			Idx:   o.Idx,
-			Text:  o.Text,
-			Votes: agg.Votes[o.Idx],
-			// Процент считается от БЮЛЛЕТЕНЕЙ: при множественном выборе сумма
-			// голосов больше числа проголосовавших, и деление на неё дало бы
-			// цифры, которые нельзя показать в эфире.
+			Idx:     o.Idx,
+			Text:    o.Text,
+			Votes:   agg.Votes[o.Idx],
 			Percent: agg.Percent(o.Idx),
 		})
 	}
@@ -388,8 +371,6 @@ func (h *AdminHandler) audit(r *http.Request, action, entity string, payload any
 	if claims != nil {
 		actor = claims.Subject
 	}
-	// Ошибка записи аудита не отменяет само действие, но и не остаётся
-	// незамеченной: без записи в журнале действие выглядит несовершённым.
 	if err := h.admins.Audit(r.Context(), actor, action, entity, payload); err != nil { //nolint:errcheck // ниже логируется
 		slog.ErrorContext(r.Context(), "не удалось записать действие в аудит",
 			slog.String("action", action), slog.String("entity", entity),

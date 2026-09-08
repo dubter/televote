@@ -55,8 +55,6 @@ func TestVotePage_UsesLocalStorageNotSession(t *testing.T) {
 
 	body := fetchPage(t, "/p/final").Body.String()
 
-	// Ищем обращение к API, а не упоминание: в комментарии рядом с кодом
-	// имя sessionStorage стоит законно — оно объясняет, почему его тут нет.
 	assert.Contains(t, body, "localStorage.getItem")
 	assert.NotContains(t, body, "sessionStorage.",
 		"идентификатор голосующего обязан переживать закрытие вкладки")

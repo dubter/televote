@@ -73,8 +73,6 @@ func classify(err error) (status int, code string) {
 	case errors.Is(err, errForbidden):
 		return http.StatusForbidden, "forbidden"
 
-	// 503 — принять голос сейчас не можем. Отдельно от 500: клиенту имеет
-	// смысл повторить, и Retry-After об этом говорит.
 	case errors.Is(err, errUnavailable):
 		return http.StatusServiceUnavailable, "unavailable"
 

@@ -36,12 +36,10 @@ type Repo interface {
 // HotConfig — всё, что нужно и приёму голоса, и публичной выдаче конфига.
 // Значение неизменяемо после публикации: читатели видят его без блокировок.
 type HotConfig struct {
-	ID       uuid.UUID
-	Slug     string
-	Question string
-	Options  []domain.Option
-	// Rules и Window вырезаны доменными методами, а не собраны заново: копия
-	// правил валидации разъехалась бы с доменной молча.
+	ID         uuid.UUID
+	Slug       string
+	Question   string
+	Options    []domain.Option
 	Rules      domain.ChoiceRules
 	Window     domain.Window
 	ShardCount uint16
@@ -85,8 +83,6 @@ type Cache struct {
 	log            *slog.Logger
 
 	// current и lastRefresh читаются с горячего пути, поэтому оба атомарные:
-	// atomic.Pointer на карту не закрывает соседнее поле, и время обновления
-	// в обычном time.Time дало бы гонку под -race.
 	current     atomic.Pointer[snapshot]
 	lastRefresh atomic.Int64 // UnixNano последнего УДАЧНОГО обновления
 }
@@ -113,9 +109,6 @@ func NewCache(repo Repo, interval time.Duration, opts ...Option) (*Cache, error)
 }
 
 // Warm загружает конфиги до прохождения readiness.
-//
-// Ошибка здесь означает, что инстанс не должен принимать трафик: с пустым
-// кэшем он ответил бы 404 на живой опрос.
 func (c *Cache) Warm(ctx context.Context) error {
 	return c.refresh(ctx)
 }
@@ -131,9 +124,6 @@ func (c *Cache) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := c.refresh(ctx); err != nil {
-				// Прежний снимок остаётся опубликованным: отвергать голоса
-				// из-за неудачного обновления почти неизменных данных хуже,
-				// чем работать на слегка устаревшем конфиге.
 				c.log.WarnContext(ctx, "pollcfg: обновление конфига не удалось, работаем на прежнем снимке",
 					slog.String("error", err.Error()))
 			}
@@ -200,9 +190,6 @@ func (c *Cache) refresh(ctx context.Context) error {
 }
 
 // hotConfig превращает строку опроса в неизменяемый конфиг.
-//
-// Негодная строка пропускается, а не роняет обновление целиком: один битый
-// опрос не должен уносить с собой весь эфир.
 func (c *Cache) hotConfig(ctx context.Context, p *domain.Poll) (*HotConfig, bool) {
 	if p == nil {
 		return nil, false
@@ -218,14 +205,10 @@ func (c *Cache) hotConfig(ctx context.Context, p *domain.Poll) (*HotConfig, bool
 		return nil, false
 	}
 	if len(p.Salt) == 0 {
-		// Соль — несущий элемент приватности: без неё voterID связуем между
-		// опросами и подбираем по известному clientID.
 		c.log.WarnContext(ctx, "pollcfg: у опроса нет соли вывода voterID",
 			slog.String("slug", p.Slug))
 	}
 
-	// Срезы копируются: снимок публикуется читателям без блокировок и не имеет
-	// права смотреть в память строки опроса, которую кто-то ещё правит.
 	options := make([]domain.Option, len(p.Options))
 	copy(options, p.Options)
 

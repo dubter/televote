@@ -55,9 +55,6 @@ func TestDeriveVoterID_DifferentSaltsUnlinkable(t *testing.T) {
 
 	assert.NotEqual(t, a, b)
 
-	// Ни один байт не должен совпадать «структурно»: HMAC разными ключами даёт
-	// независимые выходы, и совпадение хотя бы половины означало бы ошибку в
-	// использовании соли (например соль не попала в ключ HMAC).
 	same := 0
 	for i := range a {
 		if a[i] == b[i] {
@@ -69,8 +66,6 @@ func TestDeriveVoterID_DifferentSaltsUnlinkable(t *testing.T) {
 
 // clientID генерит клиент, поэтому вход враждебен по определению. Пустая
 // строка и «константы» сломанных клиентов (undefined, null, нулевой UUID)
-// склеили бы миллионы зрителей в один дедуп-ключ: первый голос прошёл бы,
-// остальные вернули already_counted — тихая потеря целой когорты.
 func TestDeriveVoterID_RejectsEmptyAndConstant(t *testing.T) {
 	t.Parallel()
 

@@ -82,8 +82,6 @@ func TestVote_NoCrossSlotError(t *testing.T) {
 				counterSlots[shard] = redisSlot(counter)
 			}
 
-			// Шарды обязаны раскладываться по разным слотам, иначе весь опрос
-			// упирается в один мастер и шардирование ничего не даёт.
 			if shardCount >= 500 {
 				distinct := make(map[uint16]struct{}, len(counterSlots))
 				for _, slot := range counterSlots {

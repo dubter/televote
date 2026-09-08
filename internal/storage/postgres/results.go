@@ -17,9 +17,6 @@ import (
 
 // ResultRepo — агрегат результатов: монотонный процесс подсчёта и публикуемый
 // результат после исключений.
-//
-// Отдельные голоса тут не хранятся и храниться не могут: в схеме нет связи
-// «голос ↔ человек» (CLAUDE.md, «Приватность»).
 type ResultRepo struct {
 	db *pgxpool.Pool
 }
@@ -38,17 +35,12 @@ func (r *ResultRepo) Upsert(ctx context.Context, pollID uuid.UUID, a domain.Aggr
 		return fmt.Errorf("postgres: опрос %s: отрицательное число бюллетеней %d", pollID, a.Ballots)
 	}
 
-	// Порядок индексов детерминирован: два снапшотера, берущие блокировки строк
-	// в разном порядке, встают в дедлок, и Postgres убивает одну транзакцию.
 	indexes := sortedIndexes(a.Votes)
 	idx := make([]int16, 0, len(indexes))
 	votes := make([]int64, 0, len(indexes))
 	for _, i := range indexes {
 		v := a.Votes[i]
 		if v < 0 {
-			// GREATEST(текущее, -5) вернул бы текущее, и запись прошла бы без
-			// ошибки, спрятав битый счётчик. Отрицательный счётчик — дефект
-			// выше по стеку, и он должен быть виден.
 			return fmt.Errorf("postgres: опрос %s, опция %d: отрицательный счётчик %d", pollID, i, v)
 		}
 		idx = append(idx, int16(i))
@@ -117,8 +109,6 @@ func (r *ResultRepo) SaveAdjusted(
 		votes = append(votes, v)
 	}
 
-	// nil и пустой срез дают одно и то же: пустой JSON-массив. Различать их
-	// незачем — «исключений не было» ровно одно состояние.
 	if excludedNets == nil {
 		excludedNets = []string{}
 	}
@@ -128,9 +118,6 @@ func (r *ResultRepo) SaveAdjusted(
 	}
 
 	err = pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
-		// DELETE перед вставкой, а не только upsert: набор опций мог сократиться,
-		// и оставшаяся от прежней финализации строка опубликовала бы голоса
-		// опции, которой в новом результате нет.
 		const clear = `DELETE FROM poll_results_adjusted WHERE poll_id = $1`
 		if _, err := tx.Exec(ctx, clear, pollID); err != nil {
 			return err
@@ -214,8 +201,6 @@ func (r *ResultRepo) aggregate(
 		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
 		func(tx pgx.Tx) error {
 			// Имена таблиц — константы этого пакета, не пользовательский ввод.
-			// Параметризовать имя таблицы SQL не позволяет; данные во всех
-			// запросах передаются только параметрами.
 			statsQ := `SELECT ballots_total FROM ` + statsTable + ` WHERE poll_id = $1`
 			if err := tx.QueryRow(ctx, statsQ, pollID).Scan(&agg.Ballots); err != nil {
 				if !errors.Is(err, pgx.ErrNoRows) {

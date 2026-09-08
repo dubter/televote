@@ -24,13 +24,10 @@ type Admin struct {
 
 // AuditEntry — запись журнала действий администратора.
 type AuditEntry struct {
-	ID     int64
-	Actor  string
-	Action string
-	Entity string
-	// Payload — сырой JSON, как он лежит в базе. Разбирать его — дело
-	// вызывающего: у разных действий разная форма, и общая структура здесь
-	// свелась бы к map[string]any.
+	ID      int64
+	Actor   string
+	Action  string
+	Entity  string
 	Payload []byte
 	At      time.Time
 }
@@ -49,10 +46,6 @@ func NewAdminRepo(db *pgxpool.Pool) (*AdminRepo, error) {
 }
 
 // ByLogin читает администратора по логину.
-//
-// Возвращает ErrNotFound для несуществующего логина. Вызывающий обязан
-// потратить то же время на проверку пароля и для неизвестного логина тоже,
-// иначе разница во времени ответа превращает форму входа в список логинов.
 func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
 	const q = `
 		SELECT id, login, password_hash, role, created_at
@@ -62,8 +55,6 @@ func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
 	err := r.db.QueryRow(ctx, q, login).Scan(&a.ID, &a.Login, &a.PasswordHash, &a.Role, &a.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Логин в текст ошибки не подставляется: ошибка попадёт в лог, а
-			// перебор логинов через логи — та же утечка, только отложенная.
 			return nil, fmt.Errorf("postgres: администратор: %w", ErrNotFound)
 		}
 		return nil, fmt.Errorf("postgres: чтение администратора: %w", err)
@@ -126,19 +117,12 @@ func (r *AdminRepo) Audit(ctx context.Context, actor, action, entity string, pay
 }
 
 // ListAudit читает последние записи журнала по сущности, новые первыми.
-//
-// Пустой entity означает «по всем сущностям». Лимит обязателен и ограничен
-// сверху: журнал растёт неограниченно, и запрос без предела однажды вытянет
-// его целиком в память админки.
 func (r *AdminRepo) ListAudit(ctx context.Context, entity string, limit int) ([]AuditEntry, error) {
 	const maxLimit = 1000
 	if limit <= 0 || limit > maxLimit {
 		limit = maxLimit
 	}
 
-	// Фильтр выражен как «$1 = '' OR entity = $1», чтобы запрос был один и
-	// параметризованный: склейка условий строкой — это тот же путь, которым в
-	// код попадает инъекция.
 	const q = `
 		SELECT id, actor, action, entity, payload, at
 		FROM admin_audit

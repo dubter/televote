@@ -1,8 +1,6 @@
 // Package metrics определяет бизнес-метрики сервиса.
 //
 // Набор лейблов у каждой метрики конечен и не содержит пользовательских данных:
-// slug, voterID или адрес в лейбле взорвали бы кардинальность и положили бы
-// Prometheus быстрее, чем сам эфир.
 package metrics
 
 import (
@@ -43,10 +41,8 @@ func New(reg prometheus.Registerer) *Metrics {
 			Help: "Голосов применено консьюмером: counted или already_counted.",
 		}, []string{"result"}),
 		produceLatency: f.NewHistogram(prometheus.HistogramOpts{
-			Name: "televote_produce_duration_seconds",
-			Help: "Время отправки голоса в Kafka — весь бюджет ответа клиенту.",
-			// Приём укладывается в доли миллисекунды; верхние корзины нужны,
-			// чтобы увидеть деградацию, а не чтобы измерить норму.
+			Name:    "televote_produce_duration_seconds",
+			Help:    "Время отправки голоса в Kafka — весь бюджет ответа клиенту.",
 			Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, 1},
 		}),
 		applyLatency: f.NewHistogram(prometheus.HistogramOpts{

@@ -64,9 +64,6 @@ type app struct {
 }
 
 // buildApp собирает зависимости в порядке «от внешних к внутренним».
-//
-// Каждый шаг возвращает ошибку наверх, а не логирует и продолжает: инстанс,
-// стартовавший без Kafka или без Redis, выглядит живым и молча теряет голоса.
 func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger, r role) (*app, error) {
 	a := &app{cfg: cfg, log: log, role: r, metrics: metrics.New(prometheus.DefaultRegisterer)}
 
@@ -93,8 +90,6 @@ func (a *app) connectStores(ctx context.Context) error {
 	if a.pgWrite, err = openPool(ctx, a.cfg.PostgresDSN, a.cfg.PostgresMaxConns); err != nil {
 		return fmt.Errorf("postgres (запись): %w", err)
 	}
-	// Конфиг опросов читается с реплики: failover primary блокирует только
-	// админку, а приём голосов его не замечает.
 	if a.pgRead, err = openPool(ctx, a.cfg.PostgresReadDSN, a.cfg.PostgresMaxConns); err != nil {
 		return fmt.Errorf("postgres (чтение): %w", err)
 	}
@@ -128,8 +123,6 @@ func (a *app) connectStores(ctx context.Context) error {
 			kgo.SeedBrokers(a.cfg.KafkaBrokers...),
 			kgo.ConsumeTopics(a.cfg.KafkaTopic),
 			kgo.ConsumerGroup(a.cfg.KafkaConsumerGroup),
-			// Оффсет коммитится вручную ПОСЛЕ применения голоса: автокоммит
-			// вперёд терял бы голоса при падении между коммитом и записью.
 			kgo.DisableAutoCommit(),
 		)
 		if err != nil {
@@ -149,8 +142,6 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("кэш конфигов: %w", err)
 	}
-	// Прогрев ДО открытия трафика: инстанс с пустым кэшем ответил бы 404
-	// на живой опрос.
 	if err := a.cache.Warm(ctx); err != nil {
 		return fmt.Errorf("прогрев кэша конфигов: %w", err)
 	}
@@ -190,8 +181,6 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("снапшотер: %w", err)
 	}
 
-	// Анализ накрутки читает тот же топик ОТДЕЛЬНОЙ группой: общая забирала бы
-	// сообщения у подсчёта, потому что Kafka делит партиции между членами группы.
 	fraudClient, err := kgo.NewClient(
 		kgo.SeedBrokers(a.cfg.KafkaBrokers...),
 		kgo.ConsumeTopics(a.cfg.KafkaTopic),
@@ -318,9 +307,6 @@ func (a *app) runBackground(ctx context.Context) {
 }
 
 // readiness — проверки для /readyz.
-//
-// Проверки настоящие: под, отвечающий 200 из воздуха, встанет в балансировку
-// и начнёт отдавать ошибки на голосах.
 func (a *app) readiness() []health.Checker {
 	checks := []health.Checker{a.pgRead.checker()}
 

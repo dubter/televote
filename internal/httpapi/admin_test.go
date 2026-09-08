@@ -155,8 +155,6 @@ func newAdminFixture(t *testing.T, role auth.Role, polls *fakePolls, results *fa
 	token, err := tokens.Issue(userID, role)
 	require.NoError(t, err)
 
-	// minLeadTime = 0: правило упреждения проверяется отдельным тестом,
-	// в остальных оно только мешает создавать фикстуры.
 	h, err := httpapi.NewAdminHandler(polls, results, admins, tokens,
 		auth.NewLoginLimiter(3, time.Minute, 100), func() time.Time { return inWindow }, 0)
 	require.NoError(t, err)
@@ -426,8 +424,6 @@ func TestAdminLogin(t *testing.T) {
 	assert.NotEmpty(t, got.Token)
 	assert.Equal(t, "admin", got.Role)
 
-	// Неверный логин и неверный пароль отвечают одинаково: разные ответы
-	// подсказали бы перебору, какие логины существуют.
 	wrongPass := f.do(t, http.MethodPost, "/login", `{"login":"admin","password":"нет"}`, "")
 	wrongUser := f.do(t, http.MethodPost, "/login", `{"login":"нет","password":"secret"}`, "")
 	assert.Equal(t, http.StatusUnauthorized, wrongPass.Code)

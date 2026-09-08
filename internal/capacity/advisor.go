@@ -1,8 +1,4 @@
 // Package capacity сообщает, сколько ресурсов нужно под ближайший эфир.
-//
-// Права на кластер остаются у KEDA: здесь только чистая функция от данных и
-// HTTP-шов, ни одного вызова Kubernetes API. Голосующий путь не должен иметь
-// возможности что-либо масштабировать.
 package capacity
 
 import (
@@ -52,8 +48,6 @@ type Advisor struct {
 
 // Config — параметры советчика.
 type Config struct {
-	// DrainWindow — за сколько мы согласны досчитать голоса. Главный рычаг
-	// «стоимость против задержки результата».
 	DrainWindow time.Duration
 	// PrewarmLead — за сколько до открытия поднимать ёмкость.
 	PrewarmLead time.Duration
@@ -100,8 +94,6 @@ func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
 
 	var lag int64
 	if a.lag != nil {
-		// Ошибка чтения лага не должна ронять советчика: KEDA получит
-		// консервативный ответ и не станет сносить ёмкость раньше времени.
 		if v, lagErr := a.lag.Lag(ctx); lagErr == nil {
 			lag = v
 		} else {

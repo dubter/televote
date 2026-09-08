@@ -13,9 +13,6 @@ import (
 )
 
 // applySchema накатывает те же миграции, что и продовый мигратор.
-//
-// Не «CREATE TABLE в тесте»: тогда тест проверял бы схему, которой нет в
-// проде, и расхождение всплыло бы только на стенде.
 func applySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 

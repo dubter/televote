@@ -40,8 +40,6 @@ func newFakeRepo(polls ...*domain.Poll) *fakeRepo {
 func (f *fakeRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	f.calls.Add(1)
 
-	// Фейк, игнорирующий ctx, не проверил бы ни таймаут рефрешера, ни
-	// остановку по отмене: оба пути ведут себя как мгновенный успех.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -512,8 +510,6 @@ func TestCache_RaceFree(t *testing.T) {
 	require.NoError(t, c.Warm(context.Background()))
 	runInBackground(t, c)
 
-	// Источник меняет выборку под рефрешером: так снимки подменяются
-	// по-настоящему, а не переставляются одни и те же указатели.
 	churn := make(chan struct{})
 	go func() {
 		defer close(churn)
@@ -534,8 +530,6 @@ func TestCache_RaceFree(t *testing.T) {
 					misses.Add(1)
 					continue
 				}
-				// Поля читаются, а не игнорируются: гонку ловит именно
-				// доступ к содержимому снимка.
 				if cfg.ID != stable.ID || len(cfg.Options) != len(stable.Options) ||
 					cfg.Rules != stable.ChoiceRules() || cfg.Window != stable.Window() {
 					mismatches.Add(1)

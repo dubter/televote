@@ -33,9 +33,6 @@ type Polls interface {
 }
 
 // LagReader сообщает, сколько сообщений опроса ещё не обработано.
-//
-// Ноль — это критерий, а не таймаут: он означает, что все принятые голоса
-// доехали до Redis, и результат можно фиксировать.
 type LagReader interface {
 	Lag(ctx context.Context) (int64, error)
 }
@@ -47,13 +44,10 @@ type Snapshotter struct {
 	polls    Polls
 	lag      LagReader
 	interval time.Duration
-	// grace — задержка перед финализацией. Финальный снапшот в момент
-	// closes_at потерял бы хвост голосов, ещё летящих по сети и лежащих в
-	// батчах продюсера.
-	grace time.Duration
-	now   func() time.Time
-	log   *slog.Logger
-	obs   Observer
+	grace    time.Duration
+	now      func() time.Time
+	log      *slog.Logger
+	obs      Observer
 }
 
 // Observer публикует наблюдаемое состояние дренажа.
@@ -138,9 +132,6 @@ func (s *Snapshotter) Tick(ctx context.Context) error {
 func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 	now := s.now()
 
-	// Переход scheduled → open по расписанию. Без него опрос, созданный
-	// заранее, так и остался бы закрытым: FSM этот переход описывает, но
-	// выполнять его больше некому.
 	if p.ShouldOpenAt(now) {
 		if err := s.polls.Transition(ctx, p.ID, domain.StatusOpen, p.Version); err != nil {
 			return fmt.Errorf("открытие по расписанию: %w", err)
@@ -174,10 +165,6 @@ func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 }
 
 // TickOnce снимает агрегат опроса и кладёт его в Postgres.
-//
-// Монотонность обеспечивается в одном месте — здесь. Redis теряет часть данных
-// при failover и может подняться с меньшими счётчиками; без максимума цифра
-// в админке уменьшилась бы на глазах.
 func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggregate, error) {
 	fresh, err := s.agg.Aggregate(ctx, p.ID, p.ShardCount)
 	if err != nil {
@@ -200,10 +187,6 @@ func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggr
 }
 
 // Finalize фиксирует результат и закрывает опрос.
-//
-// excludedNets — подсети, исключённые оператором. Исключения применяются
-// только к скорректированному результату: poll_results остаётся монотонной,
-// потому что это аудит процесса подсчёта, а не публикуемая цифра.
 func (s *Snapshotter) Finalize(ctx context.Context, p *domain.Poll, excludedNets []string) error {
 	final, err := s.TickOnce(ctx, p)
 	if err != nil {
@@ -224,8 +207,6 @@ func (s *Snapshotter) Finalize(ctx context.Context, p *domain.Poll, excludedNets
 // drained сообщает, доехали ли все принятые голоса до Redis.
 func (s *Snapshotter) drained(ctx context.Context) (bool, error) {
 	if s.lag == nil {
-		// Без источника лага дренаж считается завершённым по grace: это
-		// деградация, а не норма, поэтому она названа в логе.
 		s.log.WarnContext(ctx, "snapshot: источник consumer lag не задан, финализация по времени")
 		return true, nil
 	}

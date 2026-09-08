@@ -1,8 +1,4 @@
 // Package consumer применяет принятые голоса: подсчёт и анализ накрутки.
-//
-// Две независимые группы на одном топике. Анализ не имеет права замедлить или
-// сломать подсчёт, и разные group.id — именно та гарантия, которая это
-// обеспечивает: отставание или падение одной группы не трогает другую.
 package consumer
 
 import (
@@ -56,8 +52,6 @@ type Counting struct {
 	obs     Observer
 	log     *slog.Logger
 
-	// retryBudget ограничивает попытки применить одно сообщение. Ретраить
-	// бесконечно нельзя: партиция встанет и дренаж не закончится никогда.
 	retryBudget time.Duration
 
 	// lookupBudget — сколько ждать появления конфига опроса в кэше.
@@ -89,10 +83,6 @@ func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs O
 }
 
 // Run читает и применяет голоса до отмены контекста.
-//
-// Оффсет коммитится ПОСЛЕ применения: коммит вперёд потерял бы голоса при
-// падении между коммитом и записью. Обратный порядок даёт дубли доставки, но
-// они безвредны — применение идемпотентно по voterID.
 func (c *Counting) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		fetches := c.client.PollFetches(ctx)
@@ -134,9 +124,6 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 
-	// Окно проверяется по метке приёма, а не по времени обработки: голос с
-	// 59-й секунды эфира консьюмится через минуты после закрытия и обязан
-	// быть засчитан.
 	if !cfg.Window.IsOpenAt(msg.ProducedAt) {
 		c.reject(ctx, reasonOutOfWindow, fmt.Errorf("голос вне окна: %s", msg.ProducedAt))
 		return
@@ -180,9 +167,6 @@ func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.
 }
 
 // applyWithRetry повторяет применение, пока ошибка транзиентна и есть бюджет.
-//
-// Классификация здесь стоит дорого в обе стороны: ретрай постоянной ошибки
-// заклинит партицию навсегда, а отказ от ретрая транзиентной потеряет голос.
 func (c *Counting) applyWithRetry(
 	ctx context.Context,
 	cfg *pollcfg.HotConfig,

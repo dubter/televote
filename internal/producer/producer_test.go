@@ -42,8 +42,6 @@ func TestVoteMessage_ContainsNoRawIP(t *testing.T) {
 	require.NoError(t, err)
 	payload := string(raw)
 
-	// Полного адреса в сообщении быть не может: агрегат по подсети человека
-	// не идентифицирует, а адрес — идентифицирует.
 	assert.NotContains(t, payload, "203.0.113.42")
 	assert.Contains(t, payload, "203.0.0.0/16")
 

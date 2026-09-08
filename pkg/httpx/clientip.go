@@ -14,10 +14,6 @@ type ctxKey int
 const clientIPKey ctxKey = iota
 
 // ClientIP кладёт в контекст адрес клиента.
-//
-// X-Forwarded-For принимается ТОЛЬКО от доверенных прокси. Если брать заголовок
-// как есть, обход лимита — это одна строка в curl, а метрика лимитера при этом
-// остаётся зелёной: запросы считаются, просто по подставным ключам.
 func ClientIP(trusted []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +42,6 @@ func resolveClientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
 	}
 
 	// Доверенный hop: берём последний недоверенный адрес справа налево.
-	// Правая часть цепочки дописана нашими прокси, левую мог написать клиент.
 	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 	for i := len(parts) - 1; i >= 0; i-- {
 		candidate, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
@@ -87,13 +82,8 @@ func isTrusted(addr netip.Addr, trusted []netip.Prefix) bool {
 
 // Размеры префиксов для лимитирования и агрегатов.
 const (
-	// ipv6LimitBits — клиенту выдают целую /64, поэтому лимит по полному
-	// адресу не защищает ни от чего: каждый запрос приходит с нового адреса,
-	// а счётчики лимитера при этом выглядят нормально.
 	ipv6LimitBits = 64
-	// net16Bits — агрегат накрутки считается по /16: подсеть показывает
-	// аномалию, но человека не идентифицирует.
-	net16Bits = 16
+	net16Bits     = 16
 	// ipv6AggBits — у IPv6 /16 бессмысленна как «оператор».
 	ipv6AggBits = 32
 )

@@ -38,8 +38,6 @@ func (r ChoiceRules) Validate(choices []uint8) error {
 			return ErrInvalidChoices
 		}
 		// MaxChoices=0 означает «потолок не задан», а не «голосовать нельзя».
-		// Жёсткое n > 0 сделало бы такой опрос тихо неголосуемым: админка
-		// создала бы его без ошибки, а каждый голос получал бы 400.
 		if r.MaxChoices > 0 && n > int(r.MaxChoices) {
 			return ErrInvalidChoices
 		}
@@ -88,10 +86,6 @@ func (w Window) IsOpenAt(t time.Time) bool {
 }
 
 // ShouldOpenAt сообщает, должен ли планировщик открыть опрос в момент t.
-//
-// Прошедший ClosesAt открытию не мешает: FSM запрещает scheduled → closed
-// напрямую, поэтому опоздавший опрос открывается и закрывается финализатором.
-// Голосов это не добавит — IsOpenAt всё равно вернёт false вне окна.
 func (p *Poll) ShouldOpenAt(t time.Time) bool {
 	if p.Status != StatusScheduled || p.OpensAt.IsZero() {
 		return false

@@ -16,10 +16,6 @@ import (
 )
 
 // SaltLen — длина соли опроса в байтах. Сама соль лежит в domain.Poll.Salt:
-// пер-опрос, а не глобальная — общая делала бы voter_id сопоставимыми между
-// опросами, то есть восстанавливала бы историю голосований человека. Ровно размер блока ключа HMAC-SHA256,
-// которым выводится voter_id: короче — снижение стойкости без выигрыша, длиннее —
-// HMAC всё равно свернёт ключ хэшем.
 const SaltLen = 32
 
 // PollRepo — доступ к конфигурации опросов.
@@ -28,9 +24,6 @@ type PollRepo struct {
 }
 
 // NewPollRepo создаёт репозиторий опросов.
-//
-// Пул передаётся параметром, а не берётся из глобала: рефрешер конфига обязан
-// читать с реплики, а админка — с primary, и это разные пулы на одном типе.
 func NewPollRepo(db *pgxpool.Pool) (*PollRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: PollRepo без пула соединений")
@@ -54,8 +47,6 @@ const (
 	predPollBySlug = `p.slug = $1`
 
 	// predPollActive совпадает с предикатом частичного индекса polls_active_idx.
-	// Расхождение здесь не ошибка компиляции, а потеря индекса: запрос
-	// рефрешера начнёт сканировать архив опросов раз в 2 с с каждого инстанса.
 	predPollActive = `p.status IN ('scheduled', 'open')`
 )
 
@@ -74,9 +65,6 @@ func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 
 	salt := make([]byte, SaltLen)
 	if _, err := rand.Read(salt); err != nil {
-		// Не «продолжим без соли» и не «возьмём time.Now()»: без нормальной
-		// энтропии voter_id становится предсказуемым, а предсказуемый voter_id
-		// позволяет затереть чужой голос.
 		return fmt.Errorf("postgres: генерация соли опроса: %w", err)
 	}
 
@@ -145,9 +133,6 @@ func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Statu
 		return fmt.Errorf("postgres: неизвестный статус %q: %w", to, domain.ErrBadTransition)
 	}
 
-	// Один запрос вместо «UPDATE, потом SELECT для диагноза»: два запроса дают
-	// третий исход — строку успели удалить между ними, — и вызывающий получил бы
-	// ErrNotFound на успешно применённый переход.
 	const q = `
 		WITH updated AS (
 			UPDATE polls SET status = $2, version = version + 1
@@ -198,8 +183,6 @@ func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.P
 
 // many читает опросы по предикату и подшивает к ним опции.
 func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domain.Poll, error) {
-	// Порядок детерминирован: вызывающие сравнивают срезы, а произвольный
-	// порядок строк из Postgres сделал бы такие сравнения флаки.
 	q := `SELECT ` + pollColumns + ` FROM polls p WHERE ` + pred + ` ORDER BY p.opens_at, p.id`
 
 	rows, err := r.db.Query(ctx, q, args...)
@@ -309,10 +292,6 @@ func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 }
 
 // sortedIndexes возвращает индексы опций агрегата по возрастанию.
-//
-// Порядок обязателен, а не косметика: два снапшотера, пишущие одни и те же
-// строки в разном порядке, встают в дедлок на блокировках строк, и Postgres
-// убивает одну транзакцию. Единый порядок захвата снимает вопрос.
 func sortedIndexes(votes map[uint8]int64) []uint8 {
 	out := make([]uint8, 0, len(votes))
 	for idx := range votes {

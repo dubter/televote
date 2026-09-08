@@ -218,9 +218,6 @@ func TestLoad_DevAcceptsPlaceholderSecrets(t *testing.T) {
 // Первый пункт таблицы тихих отказов в CLAUDE.md: ключ дедупа, истекающий
 // раньше токена, открывает окно для replay. Проверяем с учётом джиттера —
 // эффективный TTL уходит вниз на DEDUP_TTL_JITTER.
-// Дедуп-ключ создаёт консьюмер, а не приём. Два сообщения одного голосующего
-// могут быть обработаны в начале и в конце дренажа, и ключ обязан пережить
-// этот разрыв: иначе второй голос будет засчитан как первый, тихо и без ошибок.
 func TestLoad_DedupTTLMustOutliveDrainWindow(t *testing.T) {
 	t.Parallel()
 
@@ -370,7 +367,6 @@ func TestKafkaConfig_Validation(t *testing.T) {
 		t.Parallel()
 
 		// Одна группа означала бы, что анализ забирает сообщения у подсчёта:
-		// Kafka делит партиции между членами группы, а не дублирует их.
 		_, err := config.LoadFrom(envWith(map[string]string{
 			"KAFKA_CONSUMER_GROUP": "same",
 			"KAFKA_FRAUD_GROUP":    "same",
@@ -381,8 +377,6 @@ func TestKafkaConfig_Validation(t *testing.T) {
 	t.Run("Kafka без брокеров не даёт стартовать", func(t *testing.T) {
 		t.Parallel()
 
-		// Приём голосов идёт только через Kafka: без брокеров инстанс не
-		// примет ни одного голоса, и падать надо на старте, а не в эфире.
 		_, err := config.LoadFrom(envWith(map[string]string{"KAFKA_BROKERS": ""}))
 		require.Error(t, err)
 	})
@@ -400,8 +394,6 @@ func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 
-	// Переменные стенда: их читает docker-compose через ${VAR:-default},
-	// в бинарь они не попадают и попадать не должны.
 	composeOnly := map[string]struct{}{
 		"APP_PORT": {}, "APP1_PORT": {}, "APP2_PORT": {},
 		"GRAFANA_PORT": {}, "POSTGRES_PORT": {},

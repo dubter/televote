@@ -14,9 +14,7 @@ type Capacity struct {
 // и проверены нагрузочным тестом на стенде.
 const (
 	// votesPerAPIPod — приём не ходит в хранилища: узкое место в syscalls.
-	votesPerAPIPod = 70_000
-	// votesPerSecPerMaster — Lua исполняется однопоточно, поэтому вертикальное
-	// масштабирование Redis не работает вовсе, только добавление мастеров.
+	votesPerAPIPod       = 70_000
 	votesPerSecPerMaster = 80_000
 	// votesPerSecPerConsumer — консьюмер упирается в тот же Redis.
 	votesPerSecPerConsumer = 30_000
@@ -24,11 +22,7 @@ const (
 	peakShare       = 0.5
 	peakWindowSecs  = 15
 	minCapacityUnit = 1
-	// safetyMargin — запас поверх расчёта. Нужен из-за перекоса нагрузки между
-	// мастерами (±5 % при 500 шардах на мастера) и из-за того, что во время
-	// failover оставшиеся ноды тянут долю упавшей. Ёмкость арендуется на
-	// двадцать минут вокруг эфира, поэтому запас почти ничего не стоит.
-	safetyMargin = 2.0
+	safetyMargin    = 2.0
 )
 
 // Базовая линия между эфирами: админка должна отвечать, даже когда голосования
@@ -42,9 +36,6 @@ const (
 // CapacityFor выводит ёмкость из ожидаемого числа голосов и окна дренажа.
 //
 // Приём считается по пику: он обязан принять всплеск в реальном времени.
-// Подсчёт — по дренажу: у него есть окно целиком, и чем оно длиннее, тем
-// меньше нужно мастеров Redis. Это главный рычаг «стоимость против задержки
-// результата».
 func CapacityFor(expectedVotes int64, drainWindow time.Duration) Capacity {
 	if expectedVotes <= 0 {
 		return Capacity{
@@ -59,15 +50,10 @@ func CapacityFor(expectedVotes int64, drainWindow time.Duration) Capacity {
 	peakRPS := float64(expectedVotes) * peakShare / peakWindowSecs
 	drainRPS := float64(expectedVotes) / drainWindow.Seconds()
 
-	// Ёмкость никогда не опускается ниже базовой линии: даже крошечный опрос
-	// не должен оставлять приём в одном экземпляре — выкатка или падение пода
-	// сделали бы его недоступным целиком.
 	return Capacity{
-		VoteAPI:      max(baselineAPI, ceilUnits(peakRPS*safetyMargin, votesPerAPIPod)),
-		Consumers:    ceilUnits(drainRPS*safetyMargin, votesPerSecPerConsumer),
-		RedisMasters: ceilUnits(drainRPS*safetyMargin, votesPerSecPerMaster),
-		// Партиций столько же, сколько консьюмеров: меньше — часть консьюмеров
-		// простаивает, потому что партиция обрабатывается одним членом группы.
+		VoteAPI:         max(baselineAPI, ceilUnits(peakRPS*safetyMargin, votesPerAPIPod)),
+		Consumers:       ceilUnits(drainRPS*safetyMargin, votesPerSecPerConsumer),
+		RedisMasters:    ceilUnits(drainRPS*safetyMargin, votesPerSecPerMaster),
 		KafkaPartitions: ceilUnits(drainRPS*safetyMargin, votesPerSecPerConsumer),
 	}
 }

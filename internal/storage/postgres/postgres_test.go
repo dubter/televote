@@ -19,9 +19,6 @@ import (
 )
 
 // startPostgres поднимает базу и накатывает схему.
-//
-// Контейнер общий на весь пакет: старт занимает секунды, а тесты изолированы
-// друг от друга уникальными слагами и идентификаторами.
 func startPostgres(t *testing.T) *postgres.PollRepo {
 	t.Helper()
 	polls, _, _ := startAll(t)

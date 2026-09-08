@@ -8,8 +8,6 @@ var (
 	// ErrInvalidChoices — выбор нарушает правила опроса. HTTP 400.
 	ErrInvalidChoices = errors.New("invalid_choices")
 
-	// ErrPollClosed — голос вне окна голосования. HTTP 409: запрос корректен,
-	// состояние — нет.
 	ErrPollClosed = errors.New("poll_closed")
 
 	// ErrOptionsImmutable — правка опций опроса, по которому уже голосовали.

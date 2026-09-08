@@ -152,7 +152,6 @@ func TestValidateChoices(t *testing.T) {
 		},
 		{
 			// MaxChoices=0 — не «голосовать нельзя», а «потолок не задан».
-			// Жёсткая проверка len > 0 сделала бы опрос тихо неголосуемым.
 			name:    "нулевой MaxChoices трактуется как отсутствие потолка",
 			poll:    multiplePoll(4, 0, 0),
 			choices: []uint8{0, 1, 2, 3},
@@ -309,8 +308,6 @@ func TestShouldOpenAt(t *testing.T) {
 		{name: "scheduled ровно в OpensAt открывается", poll: withStatus(domain.StatusScheduled), at: opens, want: true},
 		{name: "scheduled после OpensAt открывается", poll: withStatus(domain.StatusScheduled), at: opens.Add(time.Second), want: true},
 		{
-			// Планировщик мог лежать дольше эфира. Открыть и дать финализатору
-			// закрыть — единственный путь по FSM: scheduled→closed запрещён.
 			name: "scheduled с прошедшим ClosesAt всё равно открывается",
 			poll: withStatus(domain.StatusScheduled),
 			at:   closes.Add(time.Hour),

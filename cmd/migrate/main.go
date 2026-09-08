@@ -1,8 +1,4 @@
 // Команда migrate применяет схему Postgres.
-//
-// Отдельный бинарь, а не флаг сервиса: миграции обязаны выполниться один раз
-// до старта инстансов, а два инстанса, стартующих одновременно, гонялись бы
-// за одну и ту же блокировку.
 package main
 
 import (
@@ -46,8 +42,6 @@ func run(command string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// Postgres в compose может быть ещё не готов принимать соединения даже
-	// после healthcheck: ждём с коротким шагом, а не падаем на первой попытке.
 	if err := waitReady(ctx, db); err != nil {
 		return err
 	}
