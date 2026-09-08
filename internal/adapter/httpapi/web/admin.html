@@ -36,7 +36,7 @@ let token=sessionStorage.getItem("t")||"",polls=[],timer=null;
 
 // Результаты живут вне списка: список перерисовывается каждые 5 секунд, и без
 // кэша открытая таблица стиралась бы на каждом тике.
-const opened=new Set(),cache={},errors={};
+const opened=new Set(),closing=new Set(),cache={},errors={};
 
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const iso=d=>new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,16);
@@ -172,8 +172,19 @@ async function create(){
 
 async function refresh(){
   try{polls=await call("/polls")}catch(e){return}
+  polls.forEach(p=>{if(p.status!=="open")closing.delete(p.slug)});
   renderList();
   opened.forEach(loadResults);
+}
+
+function action(p){
+  if(p.status==="scheduled")
+    return '<button class="ghost" data-act="open" data-slug="'+esc(p.slug)+'">Открыть</button>';
+  if(p.status==="open")
+    return closing.has(p.slug)
+      ? '<span class="dim" style="margin-right:8px">приём закрыт, идёт финализация</span>'
+      : '<button class="ghost" data-act="close" data-slug="'+esc(p.slug)+'">Закрыть</button>';
+  return "";
 }
 
 function renderList(){
@@ -184,9 +195,7 @@ function renderList(){
     '<div class="card"><div class="row"><div><b>'+esc(p.question)+"</b> "+
     '<span class="pill">'+esc(p.status)+"</span><br>"+
     '<span class="dim">/p/'+esc(p.slug)+" · "+esc(p.opens_at)+" → "+esc(p.closes_at)+"</span></div>"+
-    '<div style="flex:0 0 auto">'+
-      '<button class="ghost" data-act="open" data-slug="'+esc(p.slug)+'">Открыть</button>'+
-      '<button class="ghost" data-act="close" data-slug="'+esc(p.slug)+'">Закрыть</button>'+
+    '<div style="flex:0 0 auto">'+action(p)+
       '<button class="ghost" data-res="'+esc(p.slug)+'">'+
       (opened.has(p.slug)?"Скрыть":"Результаты")+"</button>"+
     "</div></div>"+
@@ -201,6 +210,7 @@ async function act(slug,what){
   try{
     await call("/polls/"+encodeURIComponent(slug)+"/"+what,{method:"POST"});
     delete errors[slug];
+    if(what==="close")closing.add(slug);
   }catch(e){errors[slug]=e.message}
   refresh();
 }

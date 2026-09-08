@@ -55,7 +55,7 @@ cat <<INFO
   Голосование   ${BASE}/p/${SLUG}
   QR-код        ${BASE}/p/${SLUG}/qr.png
   Админка       ${BASE}/admin            ${ADMIN_LOGIN} / ${ADMIN_PASSWORD}
-  Grafana       http://localhost:${GRAFANA_PORT}
+  Grafana       http://localhost:${GRAFANA_PORT}/d/televote
 
   make smoke    проверить дедуп между инстансами
   make load     нагрузочный тест
