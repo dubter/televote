@@ -1,12 +1,3 @@
-# Стенд Televote: всё, что нужно, чтобы проголосовать и увидеть результат.
-#
-# Топология уменьшена, но честна: кластер Redis из шести нод (не одиночный
-# сервер — одиночный не воспроизводит CROSSSLOT), два инстанса приёма за
-# балансировщиком, Kafka как в проде.
-#
-# Порядок старта задан явно через healthcheck и completed_successfully:
-# «одна команда» чаще всего ломается именно на гонке инициализации.
-
 name: televote
 
 x-app-env: &app-env
@@ -21,19 +12,13 @@ x-app-env: &app-env
   POSTGRES_READ_DSN: postgres://televote:televote@postgres:5432/televote?sslmode=disable
   PUBLIC_BASE_URL: http://localhost:${APP_PORT:-8080}
   ASN_BLOCK_ENABLED: "false"
-  # На стенде весь трафик приходит из одной docker-сети, то есть с одного-двух
-  # адресов. Продовый порог отверг бы нагрузочный тест целиком, и тест померил
-  # бы лимитер вместо сервиса. В проде значение обратное: порог рассчитан на
-  # CGNAT, за которым сидят сотни тысяч живых зрителей.
   RATE_LIMIT_PER_MIN: "10000000"
   SNAPSHOT_INTERVAL: 2s
   SNAPSHOT_FINAL_GRACE: 5s
   DRAIN_WINDOW: 5m
   POLL_CONFIG_REFRESH: 1s
-  # На стенде ёмкость уже поднята, ждать час до открытия опроса незачем.
   POLL_MIN_LEAD_TIME: 0s
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
-  # На стенде трейсим всё: голосов десятки, а не 30 млн. Прод-дефолт 0.0001.
   OTEL_TRACE_SAMPLE_RATIO: "1"
   ADMIN_BOOTSTRAP_LOGIN: admin
   ADMIN_BOOTSTRAP_PASSWORD: dev-only-change-me
@@ -48,13 +33,11 @@ x-app: &app
     kafka-init: { condition: service_completed_successfully }
     redis-init: { condition: service_completed_successfully }
   healthcheck:
-    test: ["CMD", "/televote", "-healthcheck"]
     interval: 5s
     timeout: 3s
     retries: 12
 
 services:
-  # ─── Postgres: control plane ────────────────────────────────────────────
   postgres:
     image: postgres:17-alpine
     environment:
@@ -79,8 +62,6 @@ services:
       postgres: { condition: service_healthy }
     restart: "no"
 
-  # ─── Kafka: приём голосов ───────────────────────────────────────────────
-  # KRaft, без ZooKeeper: одна движущаяся часть вместо двух.
   kafka:
     image: apache/kafka:3.9.1
     environment:
@@ -96,9 +77,6 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      # Retention короткий намеренно: Kafka здесь буфер приёма, а не архив
-      # голосов. Длинный retention превратил бы её в хранилище персональных
-      # данных, которого мы не заводим.
       KAFKA_LOG_RETENTION_MINUTES: 10
       CLUSTER_ID: televote-local-cluster
     healthcheck:
@@ -116,7 +94,6 @@ services:
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092
       --create --if-not-exists --topic votes --partitions 6 --replication-factor 1
 
-  # ─── Redis Cluster: дедуп и счётчики ────────────────────────────────────
   redis-1: &redis
     image: redis:8-alpine
     command: ["redis-server", "/etc/redis/redis.conf"]
@@ -132,8 +109,6 @@ services:
   redis-5: *redis
   redis-6: *redis
 
-  # Три мастера и три реплики: без реплики failover невозможен в принципе,
-  # и упавший шард пропадает до ручного вмешательства.
   redis-init:
     image: redis:8-alpine
     restart: "no"
@@ -154,10 +129,14 @@ services:
       $$(getent hosts redis-6 | awk '{print $$1}'):6379
       --cluster-replicas 1 --cluster-yes || true"
 
-  # ─── Приложение ─────────────────────────────────────────────────────────
-  # Два инстанса: мультиинстансность проверяется, а не заявляется.
   app-1:
     <<: *app
+    entrypoint: ["/televote-api"]
+    healthcheck:
+      test: ["CMD", "/televote-api", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     environment:
       <<: *app-env
       INSTANCE: app-1
@@ -165,10 +144,44 @@ services:
 
   app-2:
     <<: *app
+    entrypoint: ["/televote-api"]
+    healthcheck:
+      test: ["CMD", "/televote-api", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     environment:
       <<: *app-env
       INSTANCE: app-2
     ports: ["${APP2_PORT:-8082}:8080"]
+
+  consumer:
+    <<: *app
+    entrypoint: ["/televote-consumer"]
+    healthcheck:
+      test: ["CMD", "/televote-consumer", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    environment:
+      <<: *app-env
+      INSTANCE: consumer
+    deploy:
+      replicas: 2
+
+  snapshot:
+    <<: *app
+    entrypoint: ["/televote-snapshot"]
+    healthcheck:
+      test: ["CMD", "/televote-snapshot", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    environment:
+      <<: *app-env
+      INSTANCE: snapshot
+    deploy:
+      replicas: 1
 
   lb:
     image: nginx:1.27-alpine
@@ -178,8 +191,6 @@ services:
       app-1: { condition: service_started }
       app-2: { condition: service_started }
 
-  # ─── Наблюдаемость ──────────────────────────────────────────────────────
-  # Grafana, Prometheus, Loki, Tempo и коллектор в одном контейнере.
   otel-lgtm:
     image: grafana/otel-lgtm:0.6.0
     ports:
@@ -193,7 +204,6 @@ services:
       - ./grafana/dashboards.yaml:/otel-lgtm/grafana-v11.0.0/conf/provisioning/dashboards/televote.yaml:ro
       - ./grafana/televote.json:/etc/grafana/televote/televote.json:ro
 
-  # ─── Нагрузочный профиль ────────────────────────────────────────────────
   k6:
     image: grafana/k6:latest
     profiles: ["load"]

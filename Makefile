@@ -32,7 +32,7 @@ down: ## остановить стенд и удалить тома
 
 .PHONY: logs
 logs: ## хвост логов приложения
-	@$(COMPOSE) logs -f app-1 app-2
+	@$(COMPOSE) logs -f app-1 app-2 consumer snapshot
 
 .PHONY: redis-cli
 redis-cli: ## redis-cli внутри сети кластера (снаружи будут MOVED в недоступные IP)

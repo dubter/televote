@@ -1,13 +1,3 @@
-// Нагрузочный профиль приёма голосов.
-//
-// Тест меряет не «сколько держит ноутбук», а СТОИМОСТЬ ОДНОГО ГОЛОСА:
-// абсолютный RPS на машине разработчика ничего не говорит о проде, а стоимость
-// единицы работы масштабируется линейно и превращается в число нод.
-//
-// Второе, что он проверяет, важнее латентности: сумма счётчиков после дренажа
-// обязана сойтись с числом принятых голосов. Потерю в пайплайне «приём → Kafka
-// → консьюмер → Redis» тест на латентность не увидел бы никогда.
-
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { Counter, Trend } from "k6/metrics";
@@ -23,13 +13,10 @@ const accepted = new Counter("votes_accepted");
 const rejected = new Counter("votes_rejected");
 const rateLimited = new Counter("votes_rate_limited");
 const voteLatency = new Trend("vote_latency", true);
-// drained — сколько голосов реально доехало до результатов после дренажа.
 const drained = new Counter("votes_drained");
 
 export const options = {
   scenarios: {
-    // Форма нагрузки повторяет эфир: резкий всплеск, а не плавный рампап.
-    // Зрители сканируют QR сразу, как он появился на экране.
     broadcast: {
       executor: "ramping-arrival-rate",
       startRate: 50,
@@ -43,10 +30,8 @@ export const options = {
       ],
     },
   },
-  // По умолчанию k6 не считает p(50) и p(99), а итог обещает именно их.
   summaryTrendStats: ["min", "med", "p(50)", "p(90)", "p(95)", "p(99)", "max", "avg"],
   thresholds: {
-    // Порог на приём, а не на подсчёт: подсчёт асинхронный по построению.
     "http_req_duration{scenario:broadcast}": ["p(95)<200"],
     votes_rejected: ["count<1"],
   },
@@ -81,10 +66,6 @@ export function setup() {
 
   http.post(`${BASE}/api/v1/admin/polls/${SLUG}/open`, null, auth);
 
-  // Конфиг разъезжается по инстансам фоновым рефрешером, поэтому ждём КАЖДЫЙ
-  // инстанс поимённо, а не балансировщик: тот отдаёт 200 уже с одной реплики,
-  // и первые голоса, попавшие на вторую, получают 404. Тест объявил бы это
-  // потерей голосов, которой нет.
   for (const host of INSTANCES) {
     const deadline = Date.now() + 30_000;
     let ready = false;
@@ -101,8 +82,6 @@ export function setup() {
 }
 
 export default function () {
-  // Уникальный голосующий на итерацию: цель — померить приём, а не дедуп.
-  // Повторы дали бы already_counted и занизили полезную работу.
   const voter = `k6-${exec.scenario.iterationInTest}-${__VU}`;
 
   const res = http.post(
@@ -123,12 +102,6 @@ export default function () {
 export function teardown(data) {
   const auth = { headers: { Authorization: `Bearer ${data.token}` } };
 
-  // Ждём конца дренажа: приём закончился, подсчёт продолжается.
-  //
-  // Интервал опроса ЗАВЕДОМО БОЛЬШЕ интервала снапшотера. Опрос чаще давал бы
-  // три одинаковых чтения внутри одного цикла снапшота, и проверка объявила бы
-  // дренаж законченным раньше времени — то есть сообщила бы о потере голосов,
-  // которой нет. Тест, врущий про потерю, хуже отсутствующего теста.
   const pollInterval = Number(__ENV.DRAIN_POLL_SECONDS || 5);
   const deadline = Date.now() + 120_000;
 

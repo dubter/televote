@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Общая обвязка chaos-сценариев.
-#
-# Каждый сценарий заканчивается СВЕРКОЙ АГРЕГАТА, а не проверкой «сервис
-# отвечает». Отвечать 202 и молча терять голоса — ровно тот отказ, ради
-# которого эти сценарии и написаны.
 set -euo pipefail
 
 : "${APP_PORT:=8080}"
@@ -23,7 +18,6 @@ admin_token() {
     | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
 }
 
-# create_poll <slug> <token> — опрос, открытый прямо сейчас.
 create_poll() {
   local slug=$1 token=$2
   local opens closes
@@ -40,7 +34,6 @@ JSON
   sleep 3   # конфиг разъезжается по инстансам фоновым рефрешером
 }
 
-# cast_votes <slug> <from> <to> — возвращает число принятых (202).
 cast_votes() {
   local slug=$1 from=$2 to=$3 ok=0 code
   for i in $(seq "$from" "$to"); do
@@ -52,13 +45,11 @@ cast_votes() {
   echo "$ok"
 }
 
-# ballots <slug> <token>
 ballots() {
   curl -fsS "${API}/admin/polls/$1/results" -H "Authorization: Bearer $2" \
     | sed -n 's/.*"ballots":\([0-9]*\).*/\1/p'
 }
 
-# await_drain <slug> <token> <expected> — ждёт, пока агрегат догонит приём.
 await_drain() {
   local slug=$1 token=$2 want=$3 got=0
   for _ in $(seq 1 40); do

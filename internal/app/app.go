@@ -33,15 +33,14 @@ const (
 	RoleAPI      Role = "api"
 	RoleConsumer Role = "consumer"
 	RoleSnapshot Role = "snapshot"
-	RoleAll      Role = "all"
 )
 
-func (r Role) servesHTTP() bool { return r == RoleAPI || r == RoleAll }
-func (r Role) consumes() bool   { return r == RoleConsumer || r == RoleAll }
+func (r Role) servesHTTP() bool { return r == RoleAPI }
+func (r Role) consumes() bool   { return r == RoleConsumer }
 
 // Снапшотер держится в одном экземпляре: fan-in по всем шардам не зависит от
 // нагрузки, и N реплик просто повторяли бы одну и ту же работу N раз.
-func (r Role) snapshots() bool { return r == RoleSnapshot || r == RoleAll }
+func (r Role) snapshots() bool { return r == RoleSnapshot }
 
 func (r Role) needsRedis() bool { return r.consumes() || r.snapshots() }
 

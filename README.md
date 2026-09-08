@@ -156,7 +156,6 @@ curl -s localhost:8080/api/v1/admin/polls/final/results -H "Authorization: Beare
 cmd/televote-api        приём голосов и админка
 cmd/televote-consumer   применение голосов в Redis
 cmd/televote-snapshot   Redis → Postgres, расписание, финализация
-cmd/televote            все роли в одном процессе — для локального стенда
 cmd/migrate             миграции Postgres со встроенными SQL
 
 internal/
@@ -189,7 +188,8 @@ pkg/                механизмы: ничего не знают про го
 шардам, она не зависит от нагрузки, и N реплик повторяли бы одно и то же
 N раз, поэтому он держится в одном экземпляре.
 
-`televote` со всеми ролями существует только ради стенда.
+Стенд поднимает ту же топологию: два `televote-api` за nginx, две реплики
+`televote-consumer`, один `televote-snapshot`.
 
 Код без комментариев намеренно: имена и сигнатуры несут смысл сами, а всё, что
 требует объяснения, объяснено здесь и в [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -272,9 +272,6 @@ HTTP-запрос и применение голоса в Redis минутами
 | Раздача статики | CloudFront | Cloud CDN |
 | Метрики | AMP + AMG | Managed Prometheus |
 | Секреты | Secrets Manager | Secret Manager |
-
-Redis намеренно не managed: ElastiCache делает failover за 60–120 секунд без SLA
-на RTO, а эфир длится 60 секунд.
 
 ## Артефакты работы с ИИ
 

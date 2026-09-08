@@ -8,33 +8,28 @@ run:
 linters:
   default: none
   enable:
-    - errcheck        # непроверенные ошибки
+    - errcheck
     - govet
     - staticcheck
     - ineffassign
     - unused
-    - revive          # стиль
+    - revive
     - gocritic
-    - gosec           # безопасность
-    - bodyclose       # незакрытые response body
-    - contextcheck    # потерянный context
-    - noctx           # запросы без context
-    - nilerr          # return nil при ненулевой ошибке
-    - errorlint       # сравнение ошибок без errors.Is
+    - gosec
+    - bodyclose
+    - contextcheck
+    - noctx
+    - nilerr
+    - errorlint
     - rowserrcheck
     - sqlclosecheck
     - wastedassign
     - prealloc
-    - depguard        # границы слоёв
+    - depguard
 
   settings:
     depguard:
       rules:
-        # domain не импортирует НИЧЕГО из проекта и почти ничего извне.
-        # Список allow исчерпывающий: что не разрешено — запрещено.
-        #
-        # Тесты исключены: они живут в пакете domain_test, импортируют сам
-        # domain и testify, и это не нарушение границы, а способ её проверить.
         domain-is-pure:
           files:
             - "**/internal/domain/**"
@@ -42,7 +37,6 @@ linters:
           allow:
             - $gostd
             - github.com/google/uuid
-        # Бизнес-слой не знает про HTTP.
         no-http-in-core:
           files:
             - "**/internal/vote/**"
@@ -52,9 +46,6 @@ linters:
           deny:
             - pkg: net/http
               desc: "HTTP живёт только в internal/httpapi; бизнес-слой о нём не знает"
-        # В проекте один логгер — log/slog из stdlib. Сторонние тянут за собой
-        # свой формат вывода, и структурированные записи перестают
-        # коррелироваться с трейсами по trace_id.
         single-logger:
           files:
             - "**/internal/**"
@@ -69,9 +60,6 @@ linters:
 
     revive:
       rules:
-        # Правило exported выключено осознанно: имена и сигнатуры несут смысл
-        # сами, а doc-комментарий к каждому экспортируемому символу
-        # превращается в пересказ кода.
         - name: context-as-argument
         - name: context-keys-type
         - name: error-return
@@ -87,12 +75,12 @@ linters:
         - performance
         - style
       disabled-checks:
-        - hugeParam       # на горячем пути параметры и так по указателю
+        - hugeParam
         - whyNoLint
 
     gosec:
       excludes:
-        - G115           # конверсии целых проверяются доменной валидацией
+        - G115
 
     errcheck:
       check-type-assertions: true
@@ -101,9 +89,6 @@ linters:
   exclusions:
     generated: lax
     rules:
-      # В тестах другой набор компромиссов: фикстуры возвращают несколько
-      # значений без имён, запросы строятся без контекста, тела пустые.
-      # Это шум, а не дефекты, и он прячет настоящие находки.
       - path: _test\.go
         linters:
           - gosec
@@ -112,7 +97,6 @@ linters:
           - noctx
           - gocritic
           - contextcheck
-      # Lua-скрипт встроен строкой — gosec видит в нём «команду».
       - path: internal/vote/script\.go
         linters:
           - gosec
