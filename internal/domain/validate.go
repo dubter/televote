@@ -21,11 +21,6 @@ func (p *Poll) ChoiceRules() ChoiceRules {
 	}
 }
 
-// ValidateChoices проверяет выбор по правилам опроса.
-func (p *Poll) ValidateChoices(choices []uint8) error {
-	return p.ChoiceRules().Validate(choices)
-}
-
 // Validate проверяет набор выбранных индексов.
 func (r ChoiceRules) Validate(choices []uint8) error {
 	if len(choices) == 0 {

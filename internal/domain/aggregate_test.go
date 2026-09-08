@@ -19,48 +19,6 @@ func TestAggregate_AddInitialisesVotesMap(t *testing.T) {
 	assert.Equal(t, map[uint8]int64{2: 4}, a.Votes)
 }
 
-func TestAggregate_TotalVotes(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, int64(0), domain.Aggregate{}.TotalVotes())
-	assert.Equal(t, int64(9), domain.Aggregate{Votes: map[uint8]int64{0: 4, 1: 5}, Ballots: 6}.TotalVotes())
-}
-
-// Свёртка шардов: снапшотер складывает HGETALL со всех шардов в один агрегат.
-func TestAggregate_MergeSumsShards(t *testing.T) {
-	t.Parallel()
-
-	shardA := domain.Aggregate{Votes: map[uint8]int64{0: 10, 1: 2}, Ballots: 11}
-	shardB := domain.Aggregate{Votes: map[uint8]int64{1: 5, 3: 7}, Ballots: 9}
-
-	got := shardA.Merge(shardB)
-
-	assert.Equal(t, map[uint8]int64{0: 10, 1: 7, 3: 7}, got.Votes)
-	assert.Equal(t, int64(20), got.Ballots)
-}
-
-func TestAggregate_MergeDoesNotMutateOperands(t *testing.T) {
-	t.Parallel()
-
-	a := domain.Aggregate{Votes: map[uint8]int64{0: 1}, Ballots: 1}
-	b := domain.Aggregate{Votes: map[uint8]int64{0: 2}, Ballots: 2}
-
-	_ = a.Merge(b)
-
-	assert.Equal(t, map[uint8]int64{0: 1}, a.Votes)
-	assert.Equal(t, map[uint8]int64{0: 2}, b.Votes)
-}
-
-func TestAggregate_MergeHandlesZeroValues(t *testing.T) {
-	t.Parallel()
-
-	got := domain.Aggregate{}.Merge(domain.Aggregate{Votes: map[uint8]int64{1: 3}, Ballots: 3})
-
-	assert.Equal(t, map[uint8]int64{1: 3}, got.Votes)
-	assert.Equal(t, int64(3), got.Ballots)
-	assert.NotNil(t, domain.Aggregate{}.Merge(domain.Aggregate{}).Votes)
-}
-
 // Монотонность — одно место на весь сервис (design.md §6). Redis теряет данные
 // при failover; без max Postgres откатился бы назад, и результат в эфире упал бы.
 func TestAggregate_MergeMaxNeverGoesBackwards(t *testing.T) {
@@ -108,7 +66,7 @@ func TestAggregate_PercentIsShareOfBallotsNotVotes(t *testing.T) {
 
 	a := domain.Aggregate{Votes: map[uint8]int64{0: 80, 1: 60, 2: 20}, Ballots: 100}
 
-	require.Greater(t, a.TotalVotes(), a.Ballots, "фикстура обязана быть множественным выбором")
+	require.Greater(t, a.Votes[0]+a.Votes[1]+a.Votes[2], a.Ballots, "фикстура обязана быть множественным выбором")
 	assert.InDelta(t, 80.0, a.Percent(0), 1e-9)
 	assert.InDelta(t, 60.0, a.Percent(1), 1e-9)
 	assert.InDelta(t, 20.0, a.Percent(2), 1e-9)

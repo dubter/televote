@@ -18,30 +18,6 @@ func (a *Aggregate) Add(idx uint8, n int64) {
 	a.Votes[idx] += n
 }
 
-// TotalVotes — сумма по всем опциям. Для процентов не используется, см. Percent.
-func (a Aggregate) TotalVotes() int64 {
-	var total int64
-	for _, v := range a.Votes {
-		total += v
-	}
-	return total
-}
-
-// Merge складывает агрегаты: так снапшотер сворачивает шарды. Операнды не изменяются.
-func (a Aggregate) Merge(other Aggregate) Aggregate {
-	out := Aggregate{
-		Votes:   make(map[uint8]int64, len(a.Votes)+len(other.Votes)),
-		Ballots: a.Ballots + other.Ballots,
-	}
-	for idx, v := range a.Votes {
-		out.Votes[idx] += v
-	}
-	for idx, v := range other.Votes {
-		out.Votes[idx] += v
-	}
-	return out
-}
-
 // MergeMax берёт поэлементный максимум — единственное место, где обеспечивается
 // монотонность результата.
 func (a Aggregate) MergeMax(prev Aggregate) Aggregate {

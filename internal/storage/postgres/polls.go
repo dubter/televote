@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -58,11 +57,6 @@ const (
 	// Расхождение здесь не ошибка компиляции, а потеря индекса: запрос
 	// рефрешера начнёт сканировать архив опросов раз в 2 с с каждого инстанса.
 	predPollActive = `p.status IN ('scheduled', 'open')`
-
-	// predPollUpcoming: горизонт задаётся в секундах через make_interval, а не
-	// приведением к interval. Кодировать time.Duration в тип Postgres по пути
-	// незачем — секунды однозначны в обе стороны.
-	predPollUpcoming = `p.status = 'scheduled' AND p.opens_at <= now() + make_interval(secs => $1)`
 )
 
 // Create создаёт опрос со всеми полями control plane.
@@ -140,25 +134,9 @@ func (r *PollRepo) GetBySlug(ctx context.Context, slug string) (*domain.Poll, er
 	return r.one(ctx, predPollBySlug, slug)
 }
 
-// GetByID читает опрос по идентификатору.
-func (r *PollRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Poll, error) {
-	return r.one(ctx, predPollByID, id)
-}
-
 // ListActive возвращает опросы, которые могут получить голоса: scheduled и open.
 func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return r.many(ctx, predPollActive)
-}
-
-// ListUpcoming возвращает scheduled-опросы, открытие которых наступает не
-// позднее чем через within.
-// Горизонт сравнивается с now() базы, а не сервиса: часы инстансов расходятся, и
-// прогрев по локальному времени начался бы на разных инстансах в разный момент.
-func (r *PollRepo) ListUpcoming(ctx context.Context, within time.Duration) ([]*domain.Poll, error) {
-	if within < 0 {
-		within = 0
-	}
-	return r.many(ctx, predPollUpcoming, within.Seconds())
 }
 
 // Transition переводит опрос в статус to при совпадении версии.

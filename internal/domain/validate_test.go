@@ -174,7 +174,7 @@ func TestValidateChoices(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := tc.poll.ValidateChoices(tc.choices)
+			err := tc.poll.ChoiceRules().Validate(tc.choices)
 			if tc.wantErr == nil {
 				require.NoError(t, err)
 				return
@@ -206,7 +206,7 @@ func TestValidateChoices_DoesNotMutateInput(t *testing.T) {
 
 	p := multiplePoll(5, 1, 3)
 	choices := []uint8{3, 1}
-	require.NoError(t, p.ValidateChoices(choices))
+	require.NoError(t, p.ChoiceRules().Validate(choices))
 	assert.Equal(t, []uint8{3, 1}, choices, "валидация не имеет права сортировать чужой срез")
 }
 
