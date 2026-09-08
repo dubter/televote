@@ -36,8 +36,6 @@ func TestShardCountFor(t *testing.T) {
 	}
 }
 
-// shard = hash % shard_count: ноль здесь — паника деления на ноль на горячем
-// пути, причём только в проде, где конфиг посчитан из реального числа мастеров.
 func TestShardCountFor_NeverReturnsZero(t *testing.T) {
 	t.Parallel()
 
@@ -58,8 +56,6 @@ func TestShardCountFor_IsMonotonicAndCapped(t *testing.T) {
 	}
 }
 
-// Перекос между мастерами равен 1/√(шардов на мастера) (design.md §4).
-// 500 шардов на мастера держат его в пределах ±4.5 %.
 func TestShardCountFor_KeepsAtLeastFiveHundredShardsPerMaster(t *testing.T) {
 	t.Parallel()
 
@@ -86,8 +82,6 @@ func TestPoll_OptionCount(t *testing.T) {
 	assert.Equal(t, uint8(255), (&domain.Poll{Options: make([]domain.Option, 255)}).OptionCount())
 }
 
-// Индекс опции — uint8, значит адресуемых опций не больше 255. Наивное
-// uint8(len(options)) при 256 опциях дало бы 0 и тихо отвергло все голоса.
 func TestPoll_OptionCountSaturatesAtMaxOptions(t *testing.T) {
 	t.Parallel()
 

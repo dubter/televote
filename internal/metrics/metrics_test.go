@@ -49,8 +49,6 @@ func TestNFR7_MetricsExposeBusinessCounters(t *testing.T) {
 	}
 }
 
-// Лейбл с пользовательскими данными взорвал бы кардинальность: при 30 млн
-// голосующих Prometheus умер бы раньше, чем закончился эфир.
 func TestNFR7_MetricLabelsAreBounded(t *testing.T) {
 	t.Parallel()
 
@@ -65,7 +63,6 @@ func TestNFR7_MetricLabelsAreBounded(t *testing.T) {
 	for _, forbidden := range []string{"voter", "ip=", "addr", "user_agent"} {
 		assert.NotContains(t, dump, forbidden, "в метриках не должно быть лейбла %q", forbidden)
 	}
-	// Result.String() отдаёт значение из конечного набора, а не число.
 	assert.Contains(t, dump, `value:"counted"`)
 }
 
@@ -82,7 +79,6 @@ func render(t *testing.T, reg *prometheus.Registry) string {
 	return b.String()
 }
 
-// assertCount сверяет значение счётчика по имени.
 func assertCount(t *testing.T, families []*dto.MetricFamily, name string, want float64) {
 	t.Helper()
 

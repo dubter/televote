@@ -14,21 +14,15 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// Result — исход применения голоса.
 type Result uint8
 
 const (
-	// ResultCounted — голос учтён впервые.
-	ResultCounted Result = 1
-	// ResultAlreadyCounted — этот голосующий уже учтён в этом опросе.
+	ResultCounted        Result = 1
 	ResultAlreadyCounted Result = 2
 )
 
-// Valid сообщает, является ли значение настоящим исходом.
 func (r Result) Valid() bool { return r == ResultCounted || r == ResultAlreadyCounted }
 
-// String уходит в метку метрики, поэтому набор значений конечен и не содержит
-// ничего пользовательского.
 func (r Result) String() string {
 	switch r {
 	case ResultCounted:
@@ -40,23 +34,16 @@ func (r Result) String() string {
 	}
 }
 
-// ErrInvalidArgs — голос не может быть применён из-за аргументов. Ретраем не
-// лечится: повтор с теми же аргументами даст тот же отказ и заклинит партицию.
 var ErrInvalidArgs = errors.New("invalid_vote_args")
 
-// maxJitter — джиттер больше половины TTL перестаёт быть размазыванием
-// истечения и становится лотереей: нижняя граница уходит вдвое ниже номинала.
 const maxJitter = 0.5
 
-// Caster применяет голоса в Redis.
 type Caster struct {
 	client rueidis.Client
 	ttl    time.Duration
 	jitter float64
 }
 
-// NewCaster собирает Caster. Проверки строгие: каждая из них ловит конфиг,
-// который сломал бы дедуп молча, уже в эфире.
 func NewCaster(client rueidis.Client, ttl time.Duration, jitter float64) (*Caster, error) {
 	if client == nil {
 		return nil, errors.New("vote: nil redis client")
@@ -75,12 +62,10 @@ func (c *Caster) keysFor(pollID uuid.UUID, shardCount uint16, v VoterID) (dedup,
 	return DedupKey(pollID, shard, v), CounterKey(pollID, shard)
 }
 
-// ttlSecondsFor считает TTL дедуп-ключа с джиттером.
 func (c *Caster) ttlSecondsFor(v VoterID) int64 {
 	base := c.ttl.Seconds()
 
 	if c.jitter > 0 {
-		// Детерминированная доля в [-1, 1] из хэша идентификатора.
 		const span = 2_000_001
 		frac := float64(xxhash.Sum64(v[:])%span)/float64(span/2) - 1
 		base *= 1 + c.jitter*frac
@@ -88,13 +73,11 @@ func (c *Caster) ttlSecondsFor(v VoterID) int64 {
 
 	secs := int64(base)
 	if secs < 1 {
-		// EX 0 удалил бы ключ немедленно и открыл повторное голосование.
 		return 1
 	}
 	return secs
 }
 
-// Cast применяет голос: дедуп и инкремент одной атомарной операцией.
 func (c *Caster) Cast(
 	ctx context.Context,
 	pollID uuid.UUID,
@@ -126,9 +109,6 @@ func (c *Caster) Cast(
 	return out, nil
 }
 
-// validateCast проверяет аргументы до обращения к Redis: пустой выбор создал бы
-// бюллетень без голосов и завысил знаменатель процентов, а дубль индекса —
-// два голоса за один вариант.
 func validateCast(shardCount uint16, choices []uint8) error {
 	if shardCount == 0 {
 		return fmt.Errorf("%w: shardCount равен нулю", ErrInvalidArgs)
@@ -147,7 +127,6 @@ func validateCast(shardCount uint16, choices []uint8) error {
 	return nil
 }
 
-// Aggregate сворачивает счётчики всех шардов опроса в один агрегат.
 func (c *Caster) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uint16) (domain.Aggregate, error) {
 	if shardCount == 0 {
 		return domain.Aggregate{}, fmt.Errorf("%w: shardCount равен нулю", ErrInvalidArgs)
@@ -186,7 +165,6 @@ func (c *Caster) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uin
 	return out, nil
 }
 
-// permanentErrors — ошибки, которые ретрай не лечит.
 var permanentErrors = []error{
 	context.Canceled,
 	rueidis.ErrClosing,
@@ -197,7 +175,6 @@ var permanentErrors = []error{
 	domain.ErrPollClosed,
 }
 
-// IsRetryable сообщает консьюмеру, имеет ли смысл повторить применение голоса.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -207,8 +184,6 @@ func IsRetryable(err error) bool {
 			return false
 		}
 	}
-	// Ошибка самого Redis (WRONGTYPE, синтаксис скрипта) повторится дословно.
-	// Исключение — сигналы «занят, попробуй позже».
 	var redisErr *rueidis.RedisError
 	if errors.As(err, &redisErr) {
 		return redisErr.IsLoading() || redisErr.IsClusterDown() || redisErr.IsTryAgain()

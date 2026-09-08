@@ -101,8 +101,6 @@ func TestReadyz_ReportsEveryFailingChecker(t *testing.T) {
 	assert.Len(t, body.Errors, 2, "первая ошибка не должна скрывать остальные")
 }
 
-// Чекеры бегут параллельно: пять зависимостей по секунде каждая не имеют права
-// сложиться в пятисекундный /readyz — kubelet отвалится по своему таймауту.
 func TestReadyz_RunsCheckersConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -168,7 +166,6 @@ func TestReadyz_PassesRequestContextToCheckers(t *testing.T) {
 	assert.True(t, deadlineSet.Load(), "внешний вызов обязан идти с таймаутом")
 }
 
-// Ответ health-эндпоинта, положенный в кэш, показывает готовность мёртвого пода.
 func TestHandler_ResponsesAreNotCacheable(t *testing.T) {
 	t.Parallel()
 
@@ -205,8 +202,6 @@ func TestHandler_RejectsWriteMethods(t *testing.T) {
 	assert.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
 }
 
-// Готовность снимается до Shutdown, чтобы балансировщик увёл трафик раньше,
-// чем сервер начнёт закрывать соединения.
 func TestReadyz_GateFlipsToUnavailable(t *testing.T) {
 	t.Parallel()
 

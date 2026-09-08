@@ -12,7 +12,6 @@ import (
 	"github.com/go-chi/httprate"
 )
 
-// RateLimit ограничивает ЧАСТОТУ запросов, а не их количество.
 func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Handler {
 	if window <= 0 {
 		window = time.Minute
@@ -23,7 +22,6 @@ func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Hand
 		perWindow,
 		window,
 		func(r *http.Request) (string, error) {
-			// Ключ считает LimitKey поверх адреса, который положил ClientIP:
 			return LimitKey(IPFromContext(r.Context())), nil
 		},
 		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
@@ -33,7 +31,6 @@ func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Hand
 	)
 }
 
-// BlockDatacenterASN отвергает запросы из датацентровых диапазонов.
 func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		if len(ranges) == 0 {
@@ -53,8 +50,6 @@ func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
 	}
 }
 
-// Recovery превращает панику в 500 и структурированную запись.
-//
 //nolint:contextcheck // контекст берётся из самого запроса, он здесь и нужен
 func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -73,8 +68,6 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// SecurityHeaders выставляет заголовки, которые дешевле поставить всегда,
-// чем вспоминать, где именно они нужны.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -87,7 +80,6 @@ func SecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// writeError отдаёт отказ в том же формате, что и остальной API.
 func writeError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

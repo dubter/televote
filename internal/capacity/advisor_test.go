@@ -94,8 +94,6 @@ func TestAdvise_Phases(t *testing.T) {
 	}
 }
 
-// Ёмкость выводится из ожидаемой аудитории опроса, а не из константы в коде:
-// конверсия в ТЗ не задана, и допущение обязано быть параметром.
 func TestAdvise_CapacityComesFromPoll(t *testing.T) {
 	t.Parallel()
 
@@ -109,8 +107,6 @@ func TestAdvise_CapacityComesFromPoll(t *testing.T) {
 	assert.Greater(t, big.Desired.RedisMasters, tiny.Desired.RedisMasters)
 }
 
-// Между эфирами Redis и консьюмеры не нужны вовсе: персистентного состояния
-// у них нет, поэтому они уничтожаются, а не масштабируются вниз.
 func TestAdvise_IdleDropsStatefulCapacityToZero(t *testing.T) {
 	t.Parallel()
 
@@ -121,8 +117,6 @@ func TestAdvise_IdleDropsStatefulCapacityToZero(t *testing.T) {
 	assert.Positive(t, adv.Desired.VoteAPI, "админка обязана отвечать между эфирами")
 }
 
-// Ошибка чтения лага не имеет права уронить советчика: KEDA получила бы отказ
-// и в худшем случае снесла бы ёмкость посреди дренажа.
 func TestAdvise_SurvivesLagFailure(t *testing.T) {
 	t.Parallel()
 

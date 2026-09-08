@@ -18,7 +18,6 @@ import (
 	"github.com/dubter/televote/internal/storage/postgres"
 )
 
-// startPostgres поднимает базу и накатывает схему.
 func startPostgres(t *testing.T) *postgres.PollRepo {
 	t.Helper()
 	polls, _, _ := startAll(t)
@@ -96,8 +95,6 @@ func TestCreate_PollAndOptionsAreStoredTogether(t *testing.T) {
 	assert.EqualValues(t, 1_000_000, got.ExpectedAudience)
 }
 
-// Соль генерирует сервер: принимать её извне значило бы позволить вызывающему
-// подать слабую или общую для нескольких опросов.
 func TestCreate_GeneratesUniqueSalt(t *testing.T) {
 	polls := startPostgres(t)
 	ctx := context.Background()
@@ -117,8 +114,6 @@ func TestCreate_GeneratesUniqueSalt(t *testing.T) {
 		"общая соль сделала бы voterID сопоставимыми между опросами")
 }
 
-// Слаг попадает в публичную ссылку, поэтому уникальность обеспечивает БД,
-// а не пара SELECT+INSERT: между ними успевает вклиниться второй админ.
 func TestCreate_DuplicateSlug(t *testing.T) {
 	polls := startPostgres(t)
 	ctx := context.Background()
@@ -135,7 +130,6 @@ func TestGetBySlug_UnknownPoll(t *testing.T) {
 	require.ErrorIs(t, err, postgres.ErrNotFound)
 }
 
-// Оптимистическая блокировка: два админа не должны затирать правки друг друга.
 func TestTransition_VersionConflict(t *testing.T) {
 	polls := startPostgres(t)
 	ctx := context.Background()
@@ -145,13 +139,10 @@ func TestTransition_VersionConflict(t *testing.T) {
 
 	require.NoError(t, polls.Transition(ctx, p.ID, domain.StatusOpen, p.Version))
 
-	// Та же версия второй раз: строку уже изменили.
 	err := polls.Transition(ctx, p.ID, domain.StatusClosed, p.Version)
 	require.ErrorIs(t, err, postgres.ErrVersionConflict)
 }
 
-// ListActive отдаёт scheduled и open: приём должен знать конфигурацию опроса
-// ещё до открытия, иначе первые голоса получат «неизвестный опрос».
 func TestListActive_IncludesScheduledExcludesClosed(t *testing.T) {
 	polls := startPostgres(t)
 	ctx := context.Background()
@@ -173,8 +164,6 @@ func TestListActive_IncludesScheduledExcludesClosed(t *testing.T) {
 	assert.False(t, slugs["closed"], "закрытый опрос не имеет права остаться в кэше приёма")
 }
 
-// Снапшотер пишет абсолютные значения, а Redis после failover может подняться
-// с меньшими счётчиками. Без GREATEST цифра в админке уменьшилась бы на глазах.
 func TestUpsert_IsMonotonic(t *testing.T) {
 	polls, results, _ := startAll(t)
 	ctx := context.Background()
@@ -185,7 +174,6 @@ func TestUpsert_IsMonotonic(t *testing.T) {
 	require.NoError(t, results.Upsert(ctx, p.ID,
 		domain.Aggregate{Votes: map[uint8]int64{0: 1000, 1: 500}, Ballots: 1500}))
 
-	// Потеря данных при failover: пришли меньшие значения.
 	require.NoError(t, results.Upsert(ctx, p.ID,
 		domain.Aggregate{Votes: map[uint8]int64{0: 900, 1: 600}, Ballots: 1490}))
 
@@ -196,8 +184,6 @@ func TestUpsert_IsMonotonic(t *testing.T) {
 	assert.EqualValues(t, 1500, got.Ballots)
 }
 
-// Монотонность делает безопасной одновременную работу двух снапшотеров:
-// лидер-элекшн становится оптимизацией, а не требованием корректности.
 func TestUpsert_ConcurrentSnapshottersAreSafe(t *testing.T) {
 	polls, results, _ := startAll(t)
 	ctx := context.Background()
@@ -228,8 +214,6 @@ func TestUpsert_ConcurrentSnapshottersAreSafe(t *testing.T) {
 	assert.EqualValues(t, 200, got.Votes[0], "итог обязан быть максимумом, а не последней записью")
 }
 
-// poll_results — журнал подсчёта и остаётся монотонным; исключения оператора
-// применяются только к публикуемому результату.
 func TestSaveAdjusted_DoesNotTouchRawResults(t *testing.T) {
 	polls, results, _ := startAll(t)
 	ctx := context.Background()
@@ -262,7 +246,6 @@ func TestAdminRepo_EnsureAndAudit(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	// Повторный вызов не должен ни падать, ни перезаписывать пароль.
 	again, err := admins.EnsureAdmin(ctx, postgres.Admin{
 		Login: "admin", PasswordHash: "$argon2id$other", Role: "admin",
 	})

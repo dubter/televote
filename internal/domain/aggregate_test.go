@@ -19,8 +19,6 @@ func TestAggregate_AddInitialisesVotesMap(t *testing.T) {
 	assert.Equal(t, map[uint8]int64{2: 4}, a.Votes)
 }
 
-// Монотонность — одно место на весь сервис (design.md §6). Redis теряет данные
-// при failover; без max Postgres откатился бы назад, и результат в эфире упал бы.
 func TestAggregate_MergeMaxNeverGoesBackwards(t *testing.T) {
 	t.Parallel()
 
@@ -58,9 +56,6 @@ func TestAggregate_MergeMaxIsIdempotent(t *testing.T) {
 	assert.Equal(t, once.Votes, twice.Votes)
 }
 
-// Проценты считаются от числа бюллетеней, а не от суммы голосов: при
-// множественном выборе сумма больше числа проголосовавших, и деление на неё
-// даёт цифры, которые нельзя показать в эфире.
 func TestAggregate_PercentIsShareOfBallotsNotVotes(t *testing.T) {
 	t.Parallel()
 

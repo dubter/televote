@@ -19,13 +19,8 @@ import (
 	"github.com/dubter/televote/internal/pollcfg"
 )
 
-// errRepoDown — отказ источника конфига. Отдельная переменная, а не строка на
-// месте: тесты сверяют ошибку через errors.Is, и обёртка кэша обязана её
-// сохранять — иначе дежурный не отличит падение Postgres от битого конфига.
 var errRepoDown = errors.New("postgres лежит")
 
-// fakeRepo — источник конфига без Postgres: реализация того же узкого
-// интерфейса, что и storage/postgres.PollRepo.
 type fakeRepo struct {
 	mu    sync.Mutex
 	polls []*domain.Poll
@@ -70,8 +65,6 @@ func (f *fakeRepo) fail(err error) {
 
 func (f *fakeRepo) callCount() int64 { return f.calls.Load() }
 
-// blockingRepo висит до отмены ctx — так выглядит запрос к Postgres, который
-// не вернётся никогда.
 type blockingRepo struct{}
 
 func (blockingRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
@@ -79,8 +72,6 @@ func (blockingRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return nil, ctx.Err()
 }
 
-// logCapture собирает записи slog: рефрешер не имеет права молчать об отказе
-// источника, и «не имеет права» проверяется тестом, а не обещанием.
 type logCapture struct {
 	mu    sync.Mutex
 	lines []string
@@ -118,9 +109,6 @@ func (c *logCapture) contains(level slog.Level, substr string) bool {
 
 func (c *logCapture) logger() *slog.Logger { return slog.New(c) }
 
-// openPoll — опрос в эфире. Множественный выбор взят намеренно: у него
-// заполнены и min, и max, поэтому расхождение правил кэша с доменными
-// правилами станет видно, а на single-опросе прошло бы незамеченным.
 func openPoll(slug string) *domain.Poll {
 	now := time.Now()
 	return &domain.Poll{
@@ -143,9 +131,6 @@ func openPoll(slug string) *domain.Poll {
 	}
 }
 
-// scheduledPoll — опрос, который ещё не открылся. В кэше он обязан быть:
-// публичной ручке нужен вопрос до эфира, а приём отвечает на него
-// poll_closed (409), а не «нет такого опроса» (404).
 func scheduledPoll(slug string) *domain.Poll {
 	p := openPoll(slug)
 	p.ID = uuid.New()
@@ -163,8 +148,6 @@ func newCache(t *testing.T, r pollcfg.Repo, interval time.Duration, opts ...poll
 	return c
 }
 
-// runInBackground поднимает рефрешер и гарантирует, что он остановится до
-// конца теста: горутина, живущая дольше теста, портит следующий тест.
 func runInBackground(t *testing.T, c *pollcfg.Cache) {
 	t.Helper()
 
@@ -185,7 +168,6 @@ func runInBackground(t *testing.T, c *pollcfg.Cache) {
 	})
 }
 
-// assertMatchesPoll сверяет конфиг с опросом целиком.
 func assertMatchesPoll(t *testing.T, want *domain.Poll, got *pollcfg.HotConfig) {
 	t.Helper()
 
@@ -262,8 +244,6 @@ func TestBySlug_ReturnsWarmedConfig(t *testing.T) {
 	}
 }
 
-// Консьюмер подсчёта получает из Kafka pollID, а не slug: без поиска по ID он
-// был бы вынужден обходить всю карту на каждое сообщение.
 func TestByID_ReturnsWarmedConfig(t *testing.T) {
 	t.Parallel()
 
@@ -279,8 +259,6 @@ func TestByID_ReturnsWarmedConfig(t *testing.T) {
 	assert.False(t, ok, "неизвестный ID не имеет права вернуть чужой конфиг")
 }
 
-// Холодный кэш обязан отвечать «нет», а не паниковать: до Warm инстанс не
-// проходит readiness, но /readyz и голос могут прийти в одну и ту же секунду.
 func TestBySlug_ColdCacheReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -292,8 +270,6 @@ func TestBySlug_ColdCacheReturnsNotFound(t *testing.T) {
 	assert.True(t, c.LastRefresh().IsZero(), "непрогретый кэш не имеет времени обновления")
 }
 
-// Холодный старт не проходит readiness: инстанс с пустым кэшем ответил бы 404
-// на живой опрос.
 func TestWarm_ErrorsWhenRepoFails(t *testing.T) {
 	t.Parallel()
 
@@ -310,8 +286,6 @@ func TestWarm_ErrorsWhenRepoFails(t *testing.T) {
 	assert.True(t, c.LastRefresh().IsZero())
 }
 
-// Прогрев обязан быть ограничен по времени: зависший запрос к Postgres иначе
-// держал бы старт инстанса вечно, а рефрешер — навсегда на прежнем снимке.
 func TestWarm_TimesOutOnHangingRepo(t *testing.T) {
 	t.Parallel()
 
@@ -345,9 +319,6 @@ func TestWarm_SkipsUnusablePolls(t *testing.T) {
 	assert.False(t, ok, "нулевой ID склеил бы разные опросы в одну запись")
 }
 
-// Снимок публикуется читателям без блокировок, поэтому не имеет права
-// смотреть в срезы строки опроса: правка строки после прогрева стала бы
-// гонкой, которую не покажет ни лог, ни падение.
 func TestWarm_SnapshotDoesNotAliasPoll(t *testing.T) {
 	t.Parallel()
 
@@ -390,8 +361,6 @@ func TestRun_PicksUpNewPoll(t *testing.T) {
 	assert.True(t, ok, "обновление не имеет права потерять прежние опросы")
 }
 
-// Опрос, ушедший из выборки активных, обязан исчезнуть из кэша: рефрешер
-// подменяет снимок целиком, а не доливает в него.
 func TestRun_DropsPollThatLeftActiveSet(t *testing.T) {
 	t.Parallel()
 
@@ -412,8 +381,6 @@ func TestRun_DropsPollThatLeftActiveSet(t *testing.T) {
 	assert.False(t, ok, "поиск по ID обязан обновляться вместе с поиском по slug")
 }
 
-// Падение Postgres не имеет права остановить голосование: кэш продолжает
-// отдавать прежний снимок, а не пустоту.
 func TestRun_KeepsStaleConfigWhenRepoFails(t *testing.T) {
 	t.Parallel()
 
@@ -467,9 +434,6 @@ func TestRun_ResumesAfterRepoRecovers(t *testing.T) {
 	assert.True(t, c.LastRefresh().After(warmedAt), "удачное обновление обязано двигать LastRefresh")
 }
 
-// Инвариант из CLAUDE.md: конфиг опроса — фоновый рефрешер, а не ленивый TTL.
-// Истечение TTL при 2M RPS дало бы thundering herd из тысяч одновременных
-// промахов в Postgres, который на горячем пути вообще не должен появляться.
 func TestPollCfg_NoIOOnHotPath(t *testing.T) {
 	t.Parallel()
 
@@ -493,9 +457,6 @@ func TestPollCfg_NoIOOnHotPath(t *testing.T) {
 		"чтение конфига обязано ходить только в память: ни Postgres, ни сети на горячем пути")
 }
 
-// 100 читателей против рефрешера, подменяющего снимок: под -race это
-// единственный способ показать, что чтение конфига действительно
-// неблокирующее и не разъезжается с обновлением.
 func TestCache_RaceFree(t *testing.T) {
 	t.Parallel()
 
@@ -545,9 +506,6 @@ func TestCache_RaceFree(t *testing.T) {
 	assert.Zero(t, mismatches.Load(), "читатель увидел полуобновлённый снимок")
 }
 
-// Соль вывода voter_id — несущий элемент приватности: с пустым ключом HMAC
-// даёт связуемый между опросами и подделываемый voterID. Кэш обязан сообщать
-// о таком опросе, а не отдавать его молча.
 func TestWarm_WarnsAboutPollWithoutSalt(t *testing.T) {
 	t.Parallel()
 

@@ -25,8 +25,6 @@ func mustPrefixes(tb testing.TB, cidrs ...string) []netip.Prefix {
 	return out
 }
 
-// probe отдаёт адрес, который middleware положил в контекст: именно он
-// становится ключом лимита, поэтому проверять надо его, а не заголовки.
 func probe() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(httpx.IPFromContext(r.Context()).String()))
@@ -49,9 +47,6 @@ func TestClientIP_TrustsProxyHop(t *testing.T) {
 	assert.Equal(t, "203.0.113.42", w.Body.String())
 }
 
-// Если брать X-Forwarded-For как есть, обход лимита — одна строка в curl,
-// причём метрика лимитера остаётся зелёной: запросы считаются по подставным
-// ключам, и с дашборда это выглядит нормальной работой.
 func TestNFR9_ForgedXFFIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -83,8 +78,6 @@ func TestNFR9_ForgedXFFIgnored(t *testing.T) {
 	}
 }
 
-// Клиенту выдают целую /64, поэтому лимит по полному адресу не защищает ни от
-// чего: каждый запрос приходит с нового адреса той же подсети.
 func TestNFR9_IPv6LimitedByPrefix(t *testing.T) {
 	t.Parallel()
 
@@ -101,8 +94,6 @@ func TestNFR9_IPv6LimitedByPrefix(t *testing.T) {
 	assert.Equal(t, "unknown", httpx.LimitKey(netip.Addr{}))
 }
 
-// Агрегат накрутки считается по подсети: она показывает аномалию и не
-// идентифицирует человека.
 func TestNet16_AggregatesBySubnet(t *testing.T) {
 	t.Parallel()
 
@@ -160,8 +151,6 @@ func TestBlockDatacenterASN_Returns403(t *testing.T) {
 	}
 }
 
-// Класс устройства уезжает в Kafka вместо User-Agent. Полный заголовок — это
-// отпечаток, а класс им не является: у сотен тысяч зрителей он совпадает.
 func TestUAClass_CollapsesMinorVersions(t *testing.T) {
 	t.Parallel()
 

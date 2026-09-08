@@ -22,7 +22,6 @@ var (
 	closesAt = opensAt.Add(time.Minute)
 )
 
-// fakeAgg — счётчики в Redis. Умеет «терять» данные, как при failover.
 type fakeAgg struct {
 	mu  sync.Mutex
 	agg domain.Aggregate
@@ -44,7 +43,6 @@ func (f *fakeAgg) set(votes map[uint8]int64, ballots int64) {
 	f.agg = domain.Aggregate{Votes: votes, Ballots: ballots}
 }
 
-// fakeResults — Postgres. Upsert моделирует GREATEST, как в настоящей схеме.
 type fakeResults struct {
 	mu       sync.Mutex
 	raw      domain.Aggregate
@@ -164,8 +162,6 @@ func TestTickOnce_WritesAggregateToPostgres(t *testing.T) {
 	assert.Equal(t, got.Votes, raw.Votes)
 }
 
-// Снапшотер пишет абсолютные значения, поэтому повтор цикла ничего не меняет.
-// Пиши он дельты, каждый повтор завышал бы результат.
 func TestTickOnce_IsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -186,8 +182,6 @@ func TestTickOnce_IsIdempotent(t *testing.T) {
 	assert.EqualValues(t, 100, raw.Ballots)
 }
 
-// Redis теряет часть данных при failover и поднимается с меньшими счётчиками.
-// Без максимума цифра в админке уменьшилась бы на глазах у зрителей.
 func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 	t.Parallel()
 
@@ -200,7 +194,6 @@ func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 	_, err := s.TickOnce(context.Background(), p)
 	require.NoError(t, err)
 
-	// Failover: часть данных не доехала до реплики.
 	agg.set(map[uint8]int64{0: 900, 1: 600}, 1490)
 	got, err := s.TickOnce(context.Background(), p)
 	require.NoError(t, err)
@@ -209,8 +202,6 @@ func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 	assert.EqualValues(t, 1500, got.Ballots)
 }
 
-// FSM описывает переход scheduled → open, но выполнять его больше некому:
-// без этого опрос, созданный заранее, так и остался бы закрытым.
 func TestFR6_ScheduledOpensAutomatically(t *testing.T) {
 	t.Parallel()
 
@@ -240,8 +231,6 @@ func TestTick_DoesNotOpenBeforeSchedule(t *testing.T) {
 	assert.Empty(t, polls.moves())
 }
 
-// Финализация ждёт нулевого лага, а не таймаута: ненулевой лаг означает, что
-// принятые голоса ещё не доехали до Redis, и итог был бы неполным.
 func TestFinalize_WaitsForZeroLag(t *testing.T) {
 	t.Parallel()
 
@@ -253,7 +242,6 @@ func TestFinalize_WaitsForZeroLag(t *testing.T) {
 
 	afterGrace := closesAt.Add(time.Minute)
 
-	// Дренаж ещё идёт.
 	busy := newSnapshotter(t, agg, res, polls, fakeLag{lag: 42}, afterGrace)
 	require.NoError(t, busy.Tick(context.Background()))
 
@@ -261,7 +249,6 @@ func TestFinalize_WaitsForZeroLag(t *testing.T) {
 	assert.Zero(t, saved, "итог зафиксирован до конца дренажа")
 	assert.Empty(t, polls.moves())
 
-	// Дренаж закончен.
 	done := newSnapshotter(t, agg, res, polls, fakeLag{lag: 0}, afterGrace)
 	require.NoError(t, done.Tick(context.Background()))
 
@@ -274,8 +261,6 @@ func TestFinalize_WaitsForZeroLag(t *testing.T) {
 	assert.Equal(t, domain.StatusClosed, moves[0].to)
 }
 
-// Финальный снимок в момент closes_at потерял бы хвост голосов, ещё летящих
-// по сети и лежащих в батчах продюсера.
 func TestFinalize_WaitsForGracePeriod(t *testing.T) {
 	t.Parallel()
 
@@ -283,7 +268,6 @@ func TestFinalize_WaitsForGracePeriod(t *testing.T) {
 	res := &fakeResults{}
 	polls := &fakePolls{polls: []*domain.Poll{p}}
 
-	// Окно закрылось, но grace ещё не истёк.
 	s := newSnapshotter(t, &fakeAgg{}, res, polls, fakeLag{lag: 0}, closesAt.Add(time.Second))
 	require.NoError(t, s.Tick(context.Background()))
 
@@ -292,8 +276,6 @@ func TestFinalize_WaitsForGracePeriod(t *testing.T) {
 	assert.Empty(t, polls.moves())
 }
 
-// Исключения оператора применяются только к публикуемому результату:
-// poll_results остаётся монотонной, потому что это аудит подсчёта.
 func TestFinalize_ExclusionsGoToAdjustedOnly(t *testing.T) {
 	t.Parallel()
 

@@ -23,9 +23,6 @@ func TestNew_RejectsIncompleteConfig(t *testing.T) {
 	require.ErrorIs(t, err, producer.ErrNoTopic)
 }
 
-// Сообщение переживает retention Kafka. Полный IP или User-Agent в нём
-// означали бы хранилище персональных данных вместо буфера — прямое нарушение
-// заявленной анонимности (NFR-4).
 func TestVoteMessage_ContainsNoRawIP(t *testing.T) {
 	t.Parallel()
 
@@ -45,7 +42,6 @@ func TestVoteMessage_ContainsNoRawIP(t *testing.T) {
 	assert.NotContains(t, payload, "203.0.113.42")
 	assert.Contains(t, payload, "203.0.0.0/16")
 
-	// User-Agent целиком — это отпечаток. Уезжает только грубый класс.
 	assert.NotContains(t, payload, "Mozilla")
 	assert.NotContains(t, payload, "AppleWebKit")
 
@@ -57,8 +53,6 @@ func TestVoteMessage_ContainsNoRawIP(t *testing.T) {
 	}
 }
 
-// Окно голосования проверяет консьюмер, и проверяет он по этой метке:
-// голос с последней секунды эфира обрабатывается через минуты после закрытия.
 func TestVoteMessage_ProducedAtRoundTrips(t *testing.T) {
 	t.Parallel()
 
@@ -71,8 +65,6 @@ func TestVoteMessage_ProducedAtRoundTrips(t *testing.T) {
 	assert.True(t, want.Equal(back.ProducedAt))
 }
 
-// Сообщение отправляется 30 млн раз за минуту: каждый лишний байт в поле —
-// это мегабайты трафика внутри кластера и объём на диске брокеров.
 func TestVoteMessage_IsCompact(t *testing.T) {
 	t.Parallel()
 

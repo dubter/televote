@@ -22,7 +22,6 @@ import (
 
 var adminKey = []byte("admin-test-key-0123456789abcdef!")
 
-// fakePolls — хранилище опросов в памяти.
 type fakePolls struct {
 	mu        sync.Mutex
 	bySlug    map[string]*domain.Poll
@@ -265,8 +264,6 @@ func TestCreatePoll_DuplicateSlug(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls", body, f.token).Code)
 }
 
-// Ёмкость под эфир поднимается по расписанию: опрос, открывающийся раньше,
-// эфира не получит. Отказать при создании дешевле, чем в момент ролика.
 func TestCreatePoll_RejectsTooShortLeadTime(t *testing.T) {
 	t.Parallel()
 
@@ -284,7 +281,6 @@ func TestCreatePoll_RejectsTooShortLeadTime(t *testing.T) {
 		auth.NewLoginLimiter(3, time.Minute, 100), func() time.Time { return inWindow }, time.Hour)
 	require.NoError(t, err)
 
-	// Открытие через десять минут — раньше, чем поднимется ёмкость.
 	opens := inWindow.Add(10 * time.Minute).Format(time.RFC3339)
 	closes := inWindow.Add(11 * time.Minute).Format(time.RFC3339)
 	body, _ := json.Marshal(map[string]any{
@@ -312,13 +308,11 @@ func TestFR6_TransitionsFollowFSM(t *testing.T) {
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 	assert.Equal(t, domain.StatusOpen, poll.Status)
 
-	// open → open запрещён: это не смена состояния, а лишняя запись в аудите.
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodPost, "/polls/final/close", "", f.token).Code)
 	assert.Equal(t, domain.StatusClosed, poll.Status)
 
-	// closed → open запрещён FSM: переоткрытый опрос принимал бы голоса после эфира.
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 
 	assert.Equal(t, []string{"open_poll:final", "close_poll:final"}, f.admins.actions())
@@ -338,8 +332,6 @@ func TestFR7_ViewerCannotWrite(t *testing.T) {
 		f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 }
 
-// При множественном выборе сумма голосов больше числа проголосовавших:
-// деление на неё дало бы проценты, не сходящиеся ни с чем.
 func TestFR5_PercentagesAreOfBallotsNotVotes(t *testing.T) {
 	t.Parallel()
 
@@ -372,13 +364,10 @@ func TestFR5_PercentagesAreOfBallotsNotVotes(t *testing.T) {
 	assert.InDelta(t, 60.0, got.Options[1].Percent, 1e-9)
 	assert.False(t, got.Final, "пока опрос открыт, подсчёт не окончен")
 
-	// Сумма процентов больше 100: так и должно быть при множественном выборе.
 	sum := got.Options[0].Percent + got.Options[1].Percent + got.Options[2].Percent
 	assert.Greater(t, sum, 100.0)
 }
 
-// Закрытый опрос отдаёт скорректированный результат: он публикуемый, тогда как
-// сырой остаётся монотонным журналом подсчёта.
 func TestFR5_ClosedPollReturnsAdjustedResult(t *testing.T) {
 	t.Parallel()
 
@@ -431,8 +420,6 @@ func TestAdminLogin(t *testing.T) {
 	assert.Equal(t, wrongPass.Body.String(), wrongUser.Body.String())
 }
 
-// argon2id дорог по построению: без лимита попыток логин становится
-// усилителем отказа в обслуживании даже без единого угаданного пароля.
 func TestAdminLogin_IsRateLimited(t *testing.T) {
 	t.Parallel()
 

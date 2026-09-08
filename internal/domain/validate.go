@@ -2,8 +2,6 @@ package domain
 
 import "time"
 
-// ChoiceRules — правила выбора для горячего пути. Правило одно на весь сервис:
-// две копии проверки разъехались бы молча.
 type ChoiceRules struct {
 	Type        PollType
 	OptionCount uint8
@@ -11,7 +9,6 @@ type ChoiceRules struct {
 	MaxChoices  uint8
 }
 
-// ChoiceRules собирает правила выбора для горячего пути.
 func (p *Poll) ChoiceRules() ChoiceRules {
 	return ChoiceRules{
 		Type:        p.Type,
@@ -21,7 +18,6 @@ func (p *Poll) ChoiceRules() ChoiceRules {
 	}
 }
 
-// Validate проверяет набор выбранных индексов.
 func (r ChoiceRules) Validate(choices []uint8) error {
 	if len(choices) == 0 {
 		return ErrInvalidChoices
@@ -37,16 +33,13 @@ func (r ChoiceRules) Validate(choices []uint8) error {
 		if n < int(r.MinChoices) {
 			return ErrInvalidChoices
 		}
-		// MaxChoices=0 означает «потолок не задан», а не «голосовать нельзя».
 		if r.MaxChoices > 0 && n > int(r.MaxChoices) {
 			return ErrInvalidChoices
 		}
 	default:
-		// Неизвестный тип из базы: тихая деградация исказила бы результат.
 		return ErrInvalidChoices
 	}
 
-	// Битовая карта на стеке: не аллоцирует на горячем пути.
 	var seen [MaxOptions + 1]bool
 	for _, idx := range choices {
 		if idx >= r.OptionCount {
@@ -60,24 +53,20 @@ func (r ChoiceRules) Validate(choices []uint8) error {
 	return nil
 }
 
-// Window — окно голосования и статус опроса, вырезанные для горячего пути.
 type Window struct {
 	Status   Status
 	OpensAt  time.Time
 	ClosesAt time.Time
 }
 
-// Window собирает окно голосования для горячего пути.
 func (p *Poll) Window() Window {
 	return Window{Status: p.Status, OpensAt: p.OpensAt, ClosesAt: p.ClosesAt}
 }
 
-// IsOpenAt сообщает, принимает ли опрос голоса в момент t.
 func (p *Poll) IsOpenAt(t time.Time) bool {
 	return p.Window().IsOpenAt(t)
 }
 
-// IsOpenAt сообщает, принимает ли окно голоса в момент t.
 func (w Window) IsOpenAt(t time.Time) bool {
 	if w.Status != StatusOpen || w.ClosesAt.IsZero() {
 		return false
@@ -85,7 +74,6 @@ func (w Window) IsOpenAt(t time.Time) bool {
 	return !t.Before(w.OpensAt) && t.Before(w.ClosesAt)
 }
 
-// ShouldOpenAt сообщает, должен ли планировщик открыть опрос в момент t.
 func (p *Poll) ShouldOpenAt(t time.Time) bool {
 	if p.Status != StatusScheduled || p.OpensAt.IsZero() {
 		return false

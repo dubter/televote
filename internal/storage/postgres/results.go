@@ -15,13 +15,10 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// ResultRepo — агрегат результатов: монотонный процесс подсчёта и публикуемый
-// результат после исключений.
 type ResultRepo struct {
 	db *pgxpool.Pool
 }
 
-// NewResultRepo создаёт репозиторий результатов.
 func NewResultRepo(db *pgxpool.Pool) (*ResultRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: ResultRepo без пула соединений")
@@ -29,7 +26,6 @@ func NewResultRepo(db *pgxpool.Pool) (*ResultRepo, error) {
 	return &ResultRepo{db: db}, nil
 }
 
-// Upsert записывает снимок счётчиков через GREATEST.
 func (r *ResultRepo) Upsert(ctx context.Context, pollID uuid.UUID, a domain.Aggregate) error {
 	if a.Ballots < 0 {
 		return fmt.Errorf("postgres: опрос %s: отрицательное число бюллетеней %d", pollID, a.Ballots)
@@ -60,8 +56,6 @@ func (r *ResultRepo) Upsert(ctx context.Context, pollID uuid.UUID, a domain.Aggr
 			return err
 		}
 
-		// Бюллетени монотонны по той же причине и тем же способом: проценты
-		// считаются от них, и уехавший вниз знаменатель задрал бы все доли.
 		const upsertStats = `
 			INSERT INTO poll_stats (poll_id, ballots_total, updated_at)
 			VALUES ($1, $2, now())
@@ -80,7 +74,6 @@ func (r *ResultRepo) Upsert(ctx context.Context, pollID uuid.UUID, a domain.Aggr
 	return nil
 }
 
-// Get читает текущий агрегат процесса подсчёта.
 func (r *ResultRepo) Get(ctx context.Context, pollID uuid.UUID) (domain.Aggregate, error) {
 	a, err := r.aggregate(ctx, pollID, "poll_results", "poll_stats")
 	if err != nil {
@@ -89,7 +82,6 @@ func (r *ResultRepo) Get(ctx context.Context, pollID uuid.UUID) (domain.Aggregat
 	return a, nil
 }
 
-// SaveAdjusted записывает публикуемый результат с применёнными исключениями.
 func (r *ResultRepo) SaveAdjusted(
 	ctx context.Context, pollID uuid.UUID, a domain.Aggregate, excludedNets []string,
 ) error {
@@ -132,8 +124,6 @@ func (r *ResultRepo) SaveAdjusted(
 			return err
 		}
 
-		// Наличие этой строки — признак «результат финализирован». Он отличает
-		// «ещё не публиковали» от «опубликовали, и там нули».
 		const upsertStats = `
 			INSERT INTO poll_stats_adjusted (poll_id, ballots_total, excluded_nets, at)
 			VALUES ($1, $2, $3::jsonb, now())
@@ -153,7 +143,6 @@ func (r *ResultRepo) SaveAdjusted(
 	return nil
 }
 
-// GetAdjusted читает публикуемый результат и список исключённых подсетей.
 func (r *ResultRepo) GetAdjusted(
 	ctx context.Context, pollID uuid.UUID,
 ) (domain.Aggregate, []string, error) {
@@ -191,7 +180,6 @@ func (r *ResultRepo) GetAdjusted(
 	return agg, nets, nil
 }
 
-// aggregate читает счётчики и бюллетени из указанной пары таблиц ОДНИМ снимком.
 func (r *ResultRepo) aggregate(
 	ctx context.Context, pollID uuid.UUID, resultsTable, statsTable string,
 ) (domain.Aggregate, error) {
@@ -200,7 +188,6 @@ func (r *ResultRepo) aggregate(
 	err := pgx.BeginTxFunc(ctx, r.db,
 		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},
 		func(tx pgx.Tx) error {
-			// Имена таблиц — константы этого пакета, не пользовательский ввод.
 			statsQ := `SELECT ballots_total FROM ` + statsTable + ` WHERE poll_id = $1`
 			if err := tx.QueryRow(ctx, statsQ, pollID).Scan(&agg.Ballots); err != nil {
 				if !errors.Is(err, pgx.ErrNoRows) {
@@ -216,7 +203,6 @@ func (r *ResultRepo) aggregate(
 	return agg, nil
 }
 
-// readVotes добирает счётчики опций в агрегат.
 func readVotes(
 	ctx context.Context, tx pgx.Tx, table string, pollID uuid.UUID, agg *domain.Aggregate,
 ) error {
@@ -243,7 +229,6 @@ func readVotes(
 	return rows.Err()
 }
 
-// isForeignKeyViolation сообщает, что запись сослалась на несуществующий опрос.
 func isForeignKeyViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

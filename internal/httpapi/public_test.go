@@ -25,7 +25,6 @@ import (
 
 var testSalt = []byte("test-poll-salt-0123456789abcdef!")
 
-// stubCache отдаёт конфиг без Postgres — ровно как настоящий кэш, из памяти.
 type stubCache map[string]*pollcfg.HotConfig
 
 func (s stubCache) BySlug(slug string) (*pollcfg.HotConfig, bool) {
@@ -33,8 +32,6 @@ func (s stubCache) BySlug(slug string) (*pollcfg.HotConfig, bool) {
 	return cfg, ok
 }
 
-// stubSink запоминает отправленное и умеет ломаться: приём — единственное
-// место, где отказ Kafka виден клиенту.
 type stubSink struct {
 	mu   sync.Mutex
 	sent []producer.VoteMessage
@@ -118,7 +115,6 @@ func TestFR3_VoteWithoutRegistration(t *testing.T) {
 
 	w := postVote(t, h, "final", `{"choices":[1],"voter":"9b2f4c6e-1a3d-4b5c-8d7e-0f1a2b3c4d5e"}`)
 
-	// 202, а не 200: голос принят к обработке, посчитает его консьюмер.
 	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
 
 	var got struct {
@@ -182,7 +178,6 @@ func TestFR1_2_RejectChoicesOutsideRules(t *testing.T) {
 	assert.Empty(t, sink.messages())
 }
 
-// Окно проверяется по серверному времени: часы зрителя к делу не относятся.
 func TestFR8_VoteOutsideWindowIsRejected(t *testing.T) {
 	t.Parallel()
 
@@ -220,8 +215,6 @@ func TestNFR9_BodySizeLimitEnforced(t *testing.T) {
 	assert.Empty(t, sink.messages())
 }
 
-// Kafka — единственный отказ, который виден клиенту. Честный 503, а не 202
-// за голос, которого никто не принял.
 func TestVote_KafkaDownReturns503(t *testing.T) {
 	t.Parallel()
 
@@ -274,8 +267,6 @@ func TestPollConfig_ContainsServerTimeAndCacheHeader(t *testing.T) {
 		"клиент работает по серверному времени: у зрителя часы могут врать")
 }
 
-// Один и тот же клиент обязан давать один и тот же ключ дедупа, иначе
-// повторная доставка сообщения из Kafka завысила бы результат.
 func TestVote_SameVoterYieldsSameDedupKey(t *testing.T) {
 	t.Parallel()
 

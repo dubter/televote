@@ -1,4 +1,3 @@
-// Package capacity сообщает, сколько ресурсов нужно под ближайший эфир.
 package capacity
 
 import (
@@ -11,32 +10,23 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// Phase — что сейчас происходит с ближайшим опросом.
 type Phase string
 
 const (
-	// PhaseIdle — ближайший эфир дальше горизонта прогрева.
-	PhaseIdle Phase = "idle"
-	// PhasePrewarm — ёмкость поднимается заранее.
+	PhaseIdle    Phase = "idle"
 	PhasePrewarm Phase = "prewarm"
-	// PhaseLive — идёт приём голосов.
-	PhaseLive Phase = "live"
-	// PhaseDrain — приём закрыт, подсчёт продолжается.
-	PhaseDrain Phase = "drain"
+	PhaseLive    Phase = "live"
+	PhaseDrain   Phase = "drain"
 )
 
-// Polls — источник расписания. Календарь эфиров уже лежит в базе, поэтому
-// отдельный планировщик не нужен.
 type Polls interface {
 	ListActive(ctx context.Context) ([]*domain.Poll, error)
 }
 
-// Lag сообщает, сколько сообщений ещё не обработано.
 type Lag interface {
 	Lag(ctx context.Context) (int64, error)
 }
 
-// Advisor считает желаемую ёмкость.
 type Advisor struct {
 	polls    Polls
 	lag      Lag
@@ -46,15 +36,12 @@ type Advisor struct {
 	baseline domain.Capacity
 }
 
-// Config — параметры советчика.
 type Config struct {
 	DrainWindow time.Duration
-	// PrewarmLead — за сколько до открытия поднимать ёмкость.
 	PrewarmLead time.Duration
 	Now         func() time.Time
 }
 
-// New собирает советчика.
 func New(polls Polls, lag Lag, cfg Config) (*Advisor, error) {
 	if polls == nil {
 		return nil, errors.New("capacity: не задан источник опросов")
@@ -75,7 +62,6 @@ func New(polls Polls, lag Lag, cfg Config) (*Advisor, error) {
 	}, nil
 }
 
-// Advice — ответ советчика. Его читает external scaler KEDA.
 type Advice struct {
 	Phase    Phase           `json:"phase"`
 	Reason   string          `json:"reason"`
@@ -85,7 +71,6 @@ type Advice struct {
 	Desired  domain.Capacity `json:"desired"`
 }
 
-// Advise считает желаемую ёмкость на текущий момент.
 func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
 	polls, err := a.polls.ListActive(ctx)
 	if err != nil {
@@ -132,7 +117,6 @@ func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
 	return advice, nil
 }
 
-// Handler отдаёт совет по HTTP. Не публичный маршрут: его читает только KEDA.
 func (a *Advisor) Handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		advice, err := a.Advise(r.Context())

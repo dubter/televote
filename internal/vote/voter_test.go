@@ -16,8 +16,6 @@ var (
 	saltB = []byte("poll-b-salt-0123456789abcdef0123")
 )
 
-// Идемпотентность дедупа держится на этом: тот же вход даёт тот же ключ, иначе
-// повторная доставка одного и того же сообщения из Kafka завысила бы результат.
 func TestDeriveVoterID_SameInputSameOutput(t *testing.T) {
 	t.Parallel()
 
@@ -41,8 +39,6 @@ func TestDeriveVoterID_SameInputSameOutput(t *testing.T) {
 	}
 }
 
-// Приватность: тот же браузер в двух опросах даёт несвязанные voterID, иначе
-// по совпадению ключей можно было бы склеить участие человека в разных опросах.
 func TestDeriveVoterID_DifferentSaltsUnlinkable(t *testing.T) {
 	t.Parallel()
 
@@ -64,8 +60,6 @@ func TestDeriveVoterID_DifferentSaltsUnlinkable(t *testing.T) {
 	assert.Less(t, same, len(a)/2, "выходы подозрительно похожи: %x vs %x", a, b)
 }
 
-// clientID генерит клиент, поэтому вход враждебен по определению. Пустая
-// строка и «константы» сломанных клиентов (undefined, null, нулевой UUID)
 func TestDeriveVoterID_RejectsEmptyAndConstant(t *testing.T) {
 	t.Parallel()
 
@@ -97,8 +91,6 @@ func TestDeriveVoterID_RejectsEmptyAndConstant(t *testing.T) {
 	}
 }
 
-// Длина ключа фиксирована независимо от присланного: 4 КБ мусора в поле voter
-// не должны превращаться в 4 КБ ключа в Redis. 30 млн таких ключей — это RAM.
 func TestDeriveVoterID_BoundsKeyLength(t *testing.T) {
 	t.Parallel()
 
@@ -121,8 +113,6 @@ func TestDeriveVoterID_BoundsKeyLength(t *testing.T) {
 	}
 }
 
-// Соль берётся из строки опроса. Пустая соль означает битую запись в БД, а не
-// «хэшируем без соли»: без соли чужой voterID подбирается по известному uuid.
 func TestDeriveVoterID_RejectsEmptySalt(t *testing.T) {
 	t.Parallel()
 
@@ -134,8 +124,6 @@ func TestDeriveVoterID_RejectsEmptySalt(t *testing.T) {
 	}
 }
 
-// Hex нужен продюсеру (VoteMessage.VoterID) и консьюмеру, который читает его
-// обратно. Пара обязана быть обратимой, иначе голос применится не к тому ключу.
 func TestVoterID_HexRoundTrip(t *testing.T) {
 	t.Parallel()
 

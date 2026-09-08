@@ -19,30 +19,22 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// maxVoteBody — голос это десятки байт. Всё, что заметно больше, либо мусор,
-// либо попытка занять память приёма.
 const maxVoteBody = 1024
 
-// ConfigCache — источник конфига опроса. Интерфейс объявлен здесь, у
-// потребителя, и нарочно узкий.
 type ConfigCache interface {
 	BySlug(slug string) (*pollcfg.HotConfig, bool)
 }
 
-// VoteSink принимает голос к обработке.
 type VoteSink interface {
 	Send(ctx context.Context, m producer.VoteMessage) error
 }
 
-// Observer собирает исходы приёма.
 type Observer interface {
 	VoteAccepted()
 	VoteRejected(reason string)
 	ProduceSeconds(d float64)
 }
 
-// PublicHandler обслуживает зрителя: отдаёт конфиг опроса и принимает голоса.
-// Ни Redis, ни Postgres на этом пути нет — голос уезжает в Kafka.
 type PublicHandler struct {
 	cache ConfigCache
 	sink  VoteSink
@@ -50,7 +42,6 @@ type PublicHandler struct {
 	now   func() time.Time
 }
 
-// NewPublicHandler собирает обработчик приёма.
 func NewPublicHandler(cache ConfigCache, sink VoteSink, obs Observer, now func() time.Time) (*PublicHandler, error) {
 	if cache == nil {
 		return nil, errors.New("httpapi: не задан кэш конфигов")
@@ -67,7 +58,6 @@ func NewPublicHandler(cache ConfigCache, sink VoteSink, obs Observer, now func()
 	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now}, nil
 }
 
-// Routes отдаёт публичные маршруты.
 func (h *PublicHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/polls/{slug}", h.pollConfig)
@@ -75,7 +65,6 @@ func (h *PublicHandler) Routes() chi.Router {
 	return r
 }
 
-// pollConfigResponse — то, что видит страница голосования.
 type pollConfigResponse struct {
 	Slug       string   `json:"slug"`
 	Question   string   `json:"question"`
@@ -100,7 +89,6 @@ func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
 		options = append(options, o.Text)
 	}
 
-	// Конфиг одинаков для всех 30 млн зрителей, поэтому кэшируется на CDN.
 	w.Header().Set("Cache-Control", "public, max-age=10")
 
 	writeJSON(w, http.StatusOK, pollConfigResponse{
@@ -116,13 +104,11 @@ func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// voteRequest — тело голоса. Voter генерит клиент, ключ дедупа выводит сервер.
 type voteRequest struct {
 	Choices []uint8 `json:"choices"`
 	Voter   string  `json:"voter"`
 }
 
-// voteResponse — ответ приёма.
 type voteResponse struct {
 	Status string `json:"status"`
 }
@@ -174,7 +160,6 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		ProducedAt: h.now().UTC(),
 	}
 
-	// Kafka недоступна — единственный отказ, видимый клиенту.
 	start := h.now()
 	if err := h.sink.Send(r.Context(), msg); err != nil {
 		h.obs.VoteRejected(reasonUnavailable)
@@ -189,8 +174,6 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, voteResponse{Status: "accepted"})
 }
 
-// Причины отказа. Набор конечен: значения уходят в лейбл метрики, а
-// произвольная строка взорвала бы кардинальность.
 const (
 	reasonUnknownPoll    = "unknown_poll"
 	reasonMalformed      = "malformed"
@@ -200,8 +183,6 @@ const (
 	reasonUnavailable    = "unavailable"
 )
 
-// noopObserver позволяет собрать обработчик без метрик — в тестах и в роли,
-// где приём не поднимается.
 type noopObserver struct{}
 
 func (noopObserver) VoteAccepted()          {}

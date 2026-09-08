@@ -1,8 +1,5 @@
 package consumer
 
-// Тесты применения голоса без Kafka: applyRecord и applyWithRetry — это вся
-// логика подсчёта, а чтение из брокера проверяется на стенде (make smoke).
-
 import (
 	"context"
 	"encoding/json"
@@ -30,8 +27,6 @@ var (
 	testSalt = []byte("consumer-test-salt-0123456789abc")
 )
 
-// fakeApplier имитирует Redis: дедуп по voterID и счётчики в памяти. Именно
-// эта пара свойств и делает повторную доставку безвредной.
 type fakeApplier struct {
 	mu       sync.Mutex
 	seen     map[vote.VoterID]bool
@@ -102,6 +97,8 @@ func (o *recordingObserver) VoteRejected(_ context.Context, reason string) {
 	defer o.mu.Unlock()
 	o.rejected = append(o.rejected, reason)
 }
+
+func (o *recordingObserver) ApplySeconds(float64) {}
 
 func (o *recordingObserver) reasons() []string {
 	o.mu.Lock()
@@ -174,8 +171,6 @@ func TestCounting_AppliesVote(t *testing.T) {
 	assert.Equal(t, []vote.Result{vote.ResultCounted}, obs.counted)
 }
 
-// Kafka доставляет at-least-once: ребаланс группы переигрывает сообщения, и
-// без идемпотентности применения каждый ребаланс завышал бы результат.
 func TestCounting_DuplicateDeliveryDoesNotDoubleCount(t *testing.T) {
 	t.Parallel()
 
@@ -199,9 +194,6 @@ func TestCounting_DuplicateDeliveryDoesNotDoubleCount(t *testing.T) {
 	}
 }
 
-// Голос с последней секунды эфира консьюмится через минуты после закрытия.
-// Проверка по времени ОБРАБОТКИ отвергла бы его — то есть потеряла бы хвост
-// голосования целиком.
 func TestCounting_UsesProducedAtNotProcessingTime(t *testing.T) {
 	t.Parallel()
 
@@ -260,8 +252,6 @@ func TestCounting_RejectsMalformedAndUnknown(t *testing.T) {
 		"набор причин конечен: они уходят в метку метрики")
 }
 
-// Транзиентная ошибка Redis не имеет права терять голос: он лежит в Kafka и
-// будет применён, как только шард вернётся.
 func TestCounting_RetriesTransientRedisError(t *testing.T) {
 	t.Parallel()
 
@@ -278,8 +268,6 @@ func TestCounting_RetriesTransientRedisError(t *testing.T) {
 	assert.Equal(t, 4, calls, "три отказа и одно удачное применение")
 }
 
-// Ретрай постоянной ошибки заклинил бы партицию навсегда, и дренаж не
-// закончился бы никогда.
 func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 	t.Parallel()
 
@@ -298,8 +286,6 @@ func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 	assert.Less(t, time.Since(start), time.Second)
 }
 
-// lateLookup узнаёт про опрос не сразу — так выглядит консьюмер, чей кэш
-// конфигов ещё не обновился после создания опроса.
 type lateLookup struct {
 	mu      sync.Mutex
 	cfg     *pollcfg.HotConfig
@@ -318,9 +304,6 @@ func (l *lateLookup) ByID(id uuid.UUID) (*pollcfg.HotConfig, bool) {
 	return l.cfg, true
 }
 
-// Приём и подсчёт живут в разных процессах с независимыми кэшами конфигов.
-// Голос принят инстансом, который про опрос уже знал, а консьюмер мог ещё не
-// обновиться. Отбросить сообщение в этот момент — потерять голос навсегда:
 func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
 	t.Parallel()
 
@@ -338,8 +321,6 @@ func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
 	assert.Empty(t, obs.reasons())
 }
 
-// Ждать бесконечно нельзя: чужое сообщение держало бы партицию, и дренаж
-// не закончился бы никогда.
 func TestCounting_GivesUpOnGenuinelyUnknownPoll(t *testing.T) {
 	t.Parallel()
 

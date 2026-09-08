@@ -1,6 +1,3 @@
-// Package config держит единственную структуру конфигурации сервиса и её
-// валидацию. Контракт — файл .env.example в корне репозитория: каждая
-// переменная оттуда имеет здесь поле, и это проверяется тестом.
 package config
 
 import (
@@ -17,34 +14,24 @@ import (
 	"github.com/caarlos0/env/v11"
 )
 
-// Значения ENV.
 const (
 	EnvDev        = "dev"
 	EnvStaging    = "staging"
 	EnvProduction = "production"
 )
 
-// debugDisabled — значение DEBUG_ADDR, выключающее pprof-сервер.
-// Пустая строка не годится: env-библиотека подставляет вместо неё envDefault.
 const debugDisabled = "off"
 
-// minSecretLen — размер ключа HMAC для ballot-токенов, байт.
 const minSecretLen = 32
 
 var (
-	// ErrInvalidConfig — зонтичная ошибка: её оборачивает любой отказ валидации.
 	ErrInvalidConfig = errors.New("некорректная конфигурация")
 
-	// ErrInsecureDefault — секрет остался дефолтным из .env.example.
 	ErrInsecureDefault = errors.New("небезопасный секрет: дефолт из .env.example или слабый ключ")
 
-	// ErrDedupTTLTooShort — дедуп-ключ истечёт раньше конца дренажа, и
-	// повторный голос того же человека будет засчитан.
 	ErrDedupTTLTooShort = errors.New("ttl дедупа короче окна дренажа")
 )
 
-// FieldError связывает отказ валидации с именем переменной окружения:
-// сообщение «invalid duration» без имени переменной бесполезно в 03:00.
 type FieldError struct {
 	Key      string
 	Reason   string
@@ -55,8 +42,6 @@ func (e *FieldError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Key, e.Reason)
 }
 
-// Unwrap возвращает и конкретную причину, и зонтичную ошибку, поэтому
-// errors.Is работает и с ErrInvalidConfig, и с ErrDedupTTLTooShort.
 func (e *FieldError) Unwrap() []error {
 	if e.sentinel == nil || errors.Is(e.sentinel, ErrInvalidConfig) {
 		return []error{ErrInvalidConfig}
@@ -64,14 +49,11 @@ func (e *FieldError) Unwrap() []error {
 	return []error{e.sentinel, ErrInvalidConfig}
 }
 
-// Config — вся конфигурация сервиса. Одна плоская структура: поля читают
-// параллельные пакеты, вложенность здесь только добавила бы им работы.
 type Config struct {
 	Env      string `env:"ENV" envDefault:"dev"`
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 
-	HTTPAddr string `env:"HTTP_ADDR" envDefault:":8080"`
-	// DebugAddr — pprof. "off" выключает его целиком.
+	HTTPAddr          string        `env:"HTTP_ADDR" envDefault:":8080"`
 	DebugAddr         string        `env:"DEBUG_ADDR" envDefault:"127.0.0.1:6060"`
 	ReadHeaderTimeout time.Duration `env:"READ_HEADER_TIMEOUT" envDefault:"3s"`
 	ReadTimeout       time.Duration `env:"READ_TIMEOUT" envDefault:"5s"`
@@ -87,14 +69,12 @@ type Config struct {
 	BreakerErrorRatio float64       `env:"BREAKER_ERROR_RATIO" envDefault:"0.5"`
 	BreakerWindow     time.Duration `env:"BREAKER_WINDOW" envDefault:"5s"`
 
-	PostgresDSN string `env:"POSTGRES_DSN"`
-	// PostgresReadDSN — реплика для конфига опросов. Пустой — читаем с primary.
+	PostgresDSN      string `env:"POSTGRES_DSN"`
 	PostgresReadDSN  string `env:"POSTGRES_READ_DSN"`
 	PostgresMaxConns int32  `env:"POSTGRES_MAX_CONNS" envDefault:"20"`
 
 	PollConfigRefresh time.Duration `env:"POLL_CONFIG_REFRESH" envDefault:"2s"`
 
-	// PollMinLeadTime — насколько заранее обязан создаваться опрос.
 	PollMinLeadTime time.Duration `env:"POLL_MIN_LEAD_TIME" envDefault:"1h"`
 
 	KafkaBrokers        []string      `env:"KAFKA_BROKERS" envSeparator:","`
@@ -104,15 +84,13 @@ type Config struct {
 	KafkaLinger         time.Duration `env:"KAFKA_LINGER" envDefault:"5ms"`
 	KafkaProduceTimeout time.Duration `env:"KAFKA_PRODUCE_TIMEOUT" envDefault:"2s"`
 
-	DedupTTL time.Duration `env:"DEDUP_TTL" envDefault:"30m"`
-	// DedupTTLJitter — разброс TTL. Без него 30 млн ключей истекут разом.
-	DedupTTLJitter float64 `env:"DEDUP_TTL_JITTER" envDefault:"0.1"`
+	DedupTTL       time.Duration `env:"DEDUP_TTL" envDefault:"30m"`
+	DedupTTLJitter float64       `env:"DEDUP_TTL_JITTER" envDefault:"0.1"`
 
-	RateLimitPerMin  int `env:"RATE_LIMIT_PER_MIN" envDefault:"6000"`
-	RateLimitBurst   int `env:"RATE_LIMIT_BURST" envDefault:"200"`
-	RateLimitMaxKeys int `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
-	// TrustedProxies — X-Forwarded-For принимается только от этих адресов.
-	TrustedProxies []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
+	RateLimitPerMin  int            `env:"RATE_LIMIT_PER_MIN" envDefault:"6000"`
+	RateLimitBurst   int            `env:"RATE_LIMIT_BURST" envDefault:"200"`
+	RateLimitMaxKeys int            `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
+	TrustedProxies   []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
 
 	ASNBlocklistPath  string  `env:"ASN_BLOCKLIST_PATH" envDefault:"/etc/televote/datacenter-ranges.txt"`
 	ASNBlockEnabled   bool    `env:"ASN_BLOCK_ENABLED" envDefault:"true"`
@@ -126,7 +104,6 @@ type Config struct {
 	SnapshotInterval   time.Duration `env:"SNAPSHOT_INTERVAL" envDefault:"5s"`
 	SnapshotFinalGrace time.Duration `env:"SNAPSHOT_FINAL_GRACE" envDefault:"30s"`
 
-	// DrainWindow — за сколько мы согласны досчитать голоса после эфира.
 	DrainWindow time.Duration `env:"DRAIN_WINDOW" envDefault:"5m"`
 
 	OTLPEndpoint     string  `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:"http://otel-lgtm:4317"`
@@ -137,13 +114,10 @@ type Config struct {
 	PublicBaseURL string `env:"PUBLIC_BASE_URL" envDefault:"http://localhost:8080"`
 }
 
-// Load читает конфигурацию из окружения процесса.
 func Load() (*Config, error) {
 	return LoadFrom(env.ToMap(os.Environ()))
 }
 
-// LoadFrom читает конфигурацию из явной карты переменных. Тесты и встраивание
-// сервиса в стенд получают детерминированный конфиг без глобального окружения.
 func LoadFrom(environ map[string]string) (*Config, error) {
 	if environ == nil {
 		environ = map[string]string{}
@@ -154,7 +128,6 @@ func LoadFrom(environ map[string]string) (*Config, error) {
 		return nil, translateParseError(err)
 	}
 
-	// Реплика необязательна: без неё конфиг опросов читается с primary.
 	if cfg.PostgresReadDSN == "" {
 		cfg.PostgresReadDSN = cfg.PostgresDSN
 	}
@@ -165,8 +138,6 @@ func LoadFrom(environ map[string]string) (*Config, error) {
 	return &cfg, nil
 }
 
-// EnvKeys перечисляет имена переменных окружения, которые читает Config.
-// Используется тестом-контрактом против .env.example.
 func EnvKeys() []string {
 	t := reflect.TypeOf(Config{})
 	keys := make([]string, 0, t.NumField())
@@ -178,17 +149,12 @@ func EnvKeys() []string {
 	return keys
 }
 
-// IsProduction сообщает, что действуют строгие правила по секретам.
 func (c *Config) IsProduction() bool { return c.Env == EnvProduction }
 
-// DebugEnabled сообщает, нужно ли поднимать pprof-сервер.
 func (c *Config) DebugEnabled() bool {
 	return c.DebugAddr != "" && c.DebugAddr != debugDisabled
 }
 
-// UsesInsecureDefaults сообщает, что запущено с секретами из .env.example.
-// В production Load() до этого не доходит — там это ошибка старта; в dev
-// main.go обязан написать предупреждение в лог.
 func (c *Config) UsesInsecureDefaults() bool {
 	for _, v := range []string{
 		c.AdminJWTKey, c.AdminBootstrapPassword,
@@ -200,18 +166,14 @@ func (c *Config) UsesInsecureDefaults() bool {
 	return dsnHasDefaultCredentials(c.PostgresDSN) || dsnHasDefaultCredentials(c.PostgresReadDSN)
 }
 
-// DedupTTLLowerBound — наименьший TTL, который может выдать джиттер.
-// Именно он, а не номинальный DedupTTL, обязан перекрывать окно дренажа.
 func (c *Config) DedupTTLLowerBound() time.Duration {
 	return time.Duration(float64(c.DedupTTL) * (1 - c.DedupTTLJitter))
 }
 
-// DrainBudget — сколько времени отводится на дренаж, с запасом.
 func (c *Config) DrainBudget() time.Duration {
 	return c.SnapshotFinalGrace + drainSafetyMargin
 }
 
-// drainSafetyMargin — запас поверх grace-периода.
 const drainSafetyMargin = 10 * time.Minute
 
 //nolint:gocyclo,gocognit // это один список правил; разбиение на функции здесь только прячет его.
@@ -380,7 +342,6 @@ func (c *Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// validateDedupInvariant — инвариант ttl(dedup) ≥ exp(token) + skew.
 func (c *Config) validateDedupInvariant() error {
 	if c.DedupTTL <= 0 || c.SnapshotFinalGrace <= 0 {
 		return nil // о нулевых значениях уже сообщено отдельно
@@ -399,8 +360,6 @@ func (c *Config) validateDedupInvariant() error {
 	}
 }
 
-// validateProductionSecrets: в production дефолтный секрет — ошибка старта,
-// а не предупреждение. Предупреждение в логе на пике никто не прочитает.
 func (c *Config) validateProductionSecrets() []error {
 	if !c.IsProduction() {
 		return nil
@@ -453,7 +412,6 @@ func validateDebugAddr(addr string, production bool) error {
 	if !production {
 		return nil
 	}
-	// pprof, открытый наружу, — это дамп памяти процесса по HTTP.
 	if host == "" {
 		return errors.New(`в production pprof обязан слушать loopback; "" означает все интерфейсы — используйте 127.0.0.1 или off`)
 	}
@@ -485,7 +443,6 @@ func validatePublicBaseURL(raw string) error {
 	return nil
 }
 
-// placeholderMarkers — маркеры незаполненных секретов из .env.example.
 var placeholderMarkers = []string{"change_me", "changeme", "dev-only", "example", "placeholder", "secret123"}
 
 func isPlaceholderSecret(v string) bool {
@@ -498,8 +455,6 @@ func isPlaceholderSecret(v string) bool {
 	return false
 }
 
-// dsnHasDefaultCredentials ловит `televote:televote` и прочие «логин равен
-// паролю» из стендового .env.example.
 func dsnHasDefaultCredentials(dsn string) bool {
 	if dsn == "" {
 		return false
@@ -527,8 +482,6 @@ func dsnHasDefaultCredentials(dsn string) bool {
 	}
 }
 
-// translateParseError переводит ошибки env-библиотеки на язык переменных
-// окружения: она сообщает имя поля структуры, а в логе нужно имя переменной.
 func translateParseError(err error) error {
 	var agg env.AggregateError
 	if !errors.As(err, &agg) {

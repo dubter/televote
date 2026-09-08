@@ -1,5 +1,3 @@
-// Package vote содержит горячий путь голоса: вывод voterID, шардирование
-// ключей и атомарное применение голоса в Redis.
 package vote
 
 import (
@@ -11,15 +9,10 @@ import (
 	"strings"
 )
 
-// VoterID выводится сервером из присланного клиентом значения и соли опроса:
-// клиент не может ни занять чужой ключ, ни связать участие в разных опросах.
 type VoterID [16]byte
 
-// Hex — представление для сообщения Kafka.
 func (v VoterID) Hex() string { return hex.EncodeToString(v[:]) }
 
-// ParseVoterID читает VoterID из hex. Пара с Hex обязана быть обратимой,
-// иначе голос применится не к тому ключу.
 func ParseVoterID(s string) (VoterID, error) {
 	var v VoterID
 	if len(s) != hex.EncodedLen(len(v)) {
@@ -32,24 +25,16 @@ func ParseVoterID(s string) (VoterID, error) {
 	return v, nil
 }
 
-// Ошибки разделены намеренно: битый clientID — вина клиента (400), битая
-// соль — испорченная строка опроса, то есть вина сервера.
 var (
-	// ErrBadClientID — клиент прислал пустое, константное или слишком длинное значение.
 	ErrBadClientID = errors.New("bad_client_id")
-	// ErrBadSalt — у опроса отсутствует или слишком короткая соль.
-	ErrBadSalt = errors.New("bad_poll_salt")
+	ErrBadSalt     = errors.New("bad_poll_salt")
 )
 
 const (
-	minSaltLen = 16
-	// При 30 млн ключей длина входа превращается в память кластера.
+	minSaltLen     = 16
 	maxClientIDLen = 256
 )
 
-// constantClientIDs — что присылают сломанные клиенты вместо идентификатора.
-// Опасны тем, что склеивают миллионы зрителей в один дедуп-ключ: первый голос
-// проходит, остальные теряются молча.
 var constantClientIDs = map[string]struct{}{
 	"":                                     {},
 	"undefined":                            {},
@@ -66,8 +51,6 @@ var constantClientIDs = map[string]struct{}{
 	"00000000-0000-0000-0000-000000000000": {},
 }
 
-// DeriveVoterID выводит идентификатор голосующего из соли опроса и значения,
-// присланного клиентом.
 func DeriveVoterID(salt []byte, clientID string) (VoterID, error) {
 	if len(salt) < minSaltLen {
 		return VoterID{}, fmt.Errorf("%w: длина %d, минимум %d", ErrBadSalt, len(salt), minSaltLen)

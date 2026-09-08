@@ -1,7 +1,5 @@
 package vote
 
-// Тесты внутренностей Caster: вывод ключей и TTL проверяются без Redis.
-
 import (
 	"fmt"
 	"testing"
@@ -76,9 +74,6 @@ func TestVote_ShardCountFromPoll(t *testing.T) {
 		"смена shardCount не сдвинула ключи — значение взято не из аргумента")
 }
 
-// Инвариант из CLAUDE.md: TTL дедупа с джиттером ±10 %. Без него 30 млн ключей
-// с одинаковым сроком истекут одновременно, и active expiry Redis добьёт
-// кластер ровно на хвосте дренажа — там, где ещё считаются последние голоса.
 func TestVote_TTLHasJitter(t *testing.T) {
 	t.Parallel()
 
@@ -113,8 +108,6 @@ func TestVote_TTLHasJitter(t *testing.T) {
 	}
 }
 
-// TTL меньше секунды Redis принимает только как EX 0, что немедленно удалило
-// бы ключ и открыло повторное голосование. Насыщаем до одной секунды.
 func TestCaster_TTLNeverRoundsToZero(t *testing.T) {
 	t.Parallel()
 
@@ -124,9 +117,6 @@ func TestCaster_TTLNeverRoundsToZero(t *testing.T) {
 	}
 }
 
-// Джиттер выводится из voterID, поэтому повторная доставка того же сообщения
-// считает тот же TTL. Это не косметика: SET NX не продлевает ключ, и
-// расхождение TTL между попытками означало бы разное окно дедупа.
 func TestCaster_TTLIsStableForSameVoter(t *testing.T) {
 	t.Parallel()
 

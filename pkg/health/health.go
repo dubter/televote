@@ -1,6 +1,3 @@
-// Package observability собирает телеметрию сервиса. Этот файл — только
-// health-эндпоинты: они обязаны работать даже когда всё остальное сломано,
-// поэтому не зависят ни от OTel, ни от логгера.
 package health
 
 import (
@@ -13,23 +10,14 @@ import (
 	"time"
 )
 
-// defaultCheckTimeout — общий бюджет на все readiness-проверки.
-// Два внешних PING (Redis и Postgres) обязаны укладываться в него вместе,
-// а не каждый по отдельности: kubelet ждёт ответ, а не наши таймауты.
 const defaultCheckTimeout = 2 * time.Second
 
-// Checker — одна проверка. Возвращает nil, если зависимость отвечает.
-// Обязан уважать ctx: без этого зависший PING держит /readyz до победного.
 type Checker func(context.Context) error
 
-// ErrNotAcceptingTraffic — инстанс сознательно снят с балансировки:
-// либо ещё не прогрет, либо уже гасится.
 var ErrNotAcceptingTraffic = errors.New("instance is not accepting traffic: warming up or shutting down")
 
-// Option настраивает health-хендлер.
 type Option func(*health)
 
-// WithTimeout задаёт общий бюджет на readiness-проверки.
 func WithTimeout(d time.Duration) Option {
 	return func(h *health) {
 		if d > 0 {
@@ -44,7 +32,6 @@ type health struct {
 	timeout time.Duration
 }
 
-// Handler отдаёт http.Handler с /livez и /readyz.
 func Handler(live, ready []Checker, opts ...Option) http.Handler {
 	h := &health{live: live, ready: ready, timeout: defaultCheckTimeout}
 	for _, opt := range opts {
@@ -61,23 +48,16 @@ func Handler(live, ready []Checker, opts ...Option) http.Handler {
 	return mux
 }
 
-// Gate — переключатель готовности инстанса. Готовность снимается до
-// Shutdown, чтобы балансировщик увёл трафик раньше, чем сервер начнёт
-// закрывать соединения; и до Warm, чтобы холодный кэш конфига не принимал голоса.
 type Gate struct {
 	ready atomic.Bool
 }
 
-// NewGate создаёт переключатель в состоянии «не готов».
 func NewGate() *Gate { return &Gate{} }
 
-// SetReady переключает готовность.
 func (g *Gate) SetReady(ready bool) { g.ready.Store(ready) }
 
-// Ready сообщает текущее состояние.
 func (g *Gate) Ready() bool { return g.ready.Load() }
 
-// Checker отдаёт проверку для /readyz.
 func (g *Gate) Checker() Checker {
 	return func(context.Context) error {
 		if g.ready.Load() {
@@ -120,8 +100,6 @@ func (h *health) serve(w http.ResponseWriter, r *http.Request, checkers []Checke
 	})
 }
 
-// runChecks гоняет проверки параллельно: пять зависимостей по секунде каждая
-// не имеют права сложиться в пятисекундный ответ.
 func runChecks(ctx context.Context, checkers []Checker) []error {
 	if len(checkers) == 0 {
 		return nil
@@ -157,7 +135,6 @@ func writeJSON(w http.ResponseWriter, status int, body healthResponse) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	// Кэшированный ответ health-эндпоинта показывает готовность мёртвого пода.
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 

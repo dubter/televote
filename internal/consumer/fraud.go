@@ -15,7 +15,6 @@ import (
 	"github.com/dubter/televote/internal/producer"
 )
 
-// Fraud считает агрегаты для поиска накрутки.
 type Fraud struct {
 	client *kgo.Client
 	redis  rueidis.Client
@@ -23,7 +22,6 @@ type Fraud struct {
 	ttl    int64
 }
 
-// NewFraud собирает консьюмер анализа.
 func NewFraud(client *kgo.Client, redis rueidis.Client, log *slog.Logger, ttlSeconds int64) (*Fraud, error) {
 	switch {
 	case client == nil:
@@ -40,24 +38,18 @@ func NewFraud(client *kgo.Client, redis rueidis.Client, log *slog.Logger, ttlSec
 	return &Fraud{client: client, redis: redis, log: log, ttl: ttlSeconds}, nil
 }
 
-// Ключи агрегатов. Только счётчики по подсети и классу устройства: ни voterID,
-// ни полного адреса, ни выбора — иначе анализ стал бы хранилищем персональных
-// данных, которого мы не заводим.
 func fraudNetKey(pollID uuid.UUID) string { return "fraud:{p:" + pollID.String() + "}:net" }
 func fraudUAKey(pollID uuid.UUID) string  { return "fraud:{p:" + pollID.String() + "}:ua" }
 func fraudCurveKey(pollID uuid.UUID) string {
 	return "fraud:{p:" + pollID.String() + "}:curve"
 }
 
-// Signals — то, что видит оператор в админке.
 type Signals struct {
-	// ByNet — голосов на /16-подсеть. Показывает концентрацию, но не адрес.
 	ByNet     map[string]int64 `json:"by_net"`
 	ByUAClass map[string]int64 `json:"by_ua_class"`
 	Curve     map[string]int64 `json:"curve"`
 }
 
-// Run читает топик и копит агрегаты до отмены контекста.
 func (f *Fraud) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		fetches := f.client.PollFetches(ctx)
@@ -113,7 +105,6 @@ func (f *Fraud) appendCommands(ctx context.Context, batch rueidis.Commands, rec 
 	return batch
 }
 
-// Read отдаёт накопленные сигналы.
 func (f *Fraud) Read(ctx context.Context, pollID uuid.UUID) (Signals, error) {
 	keys := []string{fraudNetKey(pollID), fraudUAKey(pollID), fraudCurveKey(pollID)}
 

@@ -1,4 +1,3 @@
-// Package producer отправляет принятые голоса в Kafka.
 package producer
 
 import (
@@ -12,7 +11,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// VoteMessage — голос в том виде, в каком он живёт в Kafka.
 type VoteMessage struct {
 	PollID     uuid.UUID `json:"p"`
 	VoterID    string    `json:"v"` // hex, выведен сервером из соли опроса
@@ -22,7 +20,6 @@ type VoteMessage struct {
 	ProducedAt time.Time `json:"t"`
 }
 
-// Config — параметры продюсера.
 type Config struct {
 	Brokers        []string
 	Topic          string
@@ -30,12 +27,9 @@ type Config struct {
 	ProduceTimeout time.Duration
 }
 
-// Ошибки продюсера.
 var (
-	// ErrNoBrokers — не задан ни один брокер.
 	ErrNoBrokers = errors.New("producer: не задан ни один брокер")
-	// ErrNoTopic — не задан топик.
-	ErrNoTopic = errors.New("producer: не задан топик")
+	ErrNoTopic   = errors.New("producer: не задан топик")
 )
 
 const (
@@ -43,14 +37,12 @@ const (
 	defaultProduceTimeout = 2 * time.Second
 )
 
-// Producer отправляет голоса в Kafka.
 type Producer struct {
 	client  *kgo.Client
 	topic   string
 	timeout time.Duration
 }
 
-// New собирает продюсера.
 func New(cfg Config) (*Producer, error) {
 	if len(cfg.Brokers) == 0 {
 		return nil, ErrNoBrokers
@@ -79,7 +71,6 @@ func New(cfg Config) (*Producer, error) {
 	return &Producer{client: client, topic: cfg.Topic, timeout: cfg.ProduceTimeout}, nil
 }
 
-// Send отправляет голос.
 func (p *Producer) Send(ctx context.Context, m VoteMessage) error {
 	if m.ProducedAt.IsZero() {
 		m.ProducedAt = time.Now().UTC()
@@ -104,7 +95,6 @@ func (p *Producer) Send(ctx context.Context, m VoteMessage) error {
 	return nil
 }
 
-// Close дренирует незавершённые батчи и закрывает клиент.
 func (p *Producer) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()

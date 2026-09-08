@@ -2,7 +2,6 @@ package httpx
 
 import "strings"
 
-// UAClass сводит User-Agent к грубому классу устройства.
 func UAClass(userAgent string) string {
 	ua := strings.ToLower(userAgent)
 
@@ -24,8 +23,6 @@ func UAClass(userAgent string) string {
 	}
 }
 
-// majorVersionAfter достаёт мажорную версию: минорные и патч-версии дробили бы
-// классы на сотни значений и вернули бы отпечаток через заднюю дверь.
 func majorVersionAfter(ua, marker string) string {
 	i := strings.Index(ua, marker)
 	if i < 0 {

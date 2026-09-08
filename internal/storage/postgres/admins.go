@@ -12,17 +12,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Admin — администратор из таблицы admin_users.
 type Admin struct {
-	ID    uuid.UUID
-	Login string
-	// PasswordHash — argon2id-хэш. В логи не попадает никогда.
+	ID           uuid.UUID
+	Login        string
 	PasswordHash string
 	Role         string
 	CreatedAt    time.Time
 }
 
-// AuditEntry — запись журнала действий администратора.
 type AuditEntry struct {
 	ID      int64
 	Actor   string
@@ -32,12 +29,10 @@ type AuditEntry struct {
 	At      time.Time
 }
 
-// AdminRepo — администраторы и журнал их действий.
 type AdminRepo struct {
 	db *pgxpool.Pool
 }
 
-// NewAdminRepo создаёт репозиторий администраторов.
 func NewAdminRepo(db *pgxpool.Pool) (*AdminRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: AdminRepo без пула соединений")
@@ -45,7 +40,6 @@ func NewAdminRepo(db *pgxpool.Pool) (*AdminRepo, error) {
 	return &AdminRepo{db: db}, nil
 }
 
-// ByLogin читает администратора по логину.
 func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
 	const q = `
 		SELECT id, login, password_hash, role, created_at
@@ -62,8 +56,6 @@ func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
 	return &a, nil
 }
 
-// EnsureAdmin создаёт администратора, если логин ещё не занят, и сообщает,
-// создал ли.
 func (r *AdminRepo) EnsureAdmin(ctx context.Context, a Admin) (bool, error) {
 	if a.Login == "" || a.PasswordHash == "" || a.Role == "" {
 		return false, errors.New("postgres: EnsureAdmin: логин, хэш и роль обязательны")
@@ -83,7 +75,6 @@ func (r *AdminRepo) EnsureAdmin(ctx context.Context, a Admin) (bool, error) {
 	err := r.db.QueryRow(ctx, q, id, a.Login, a.PasswordHash, a.Role).Scan(&created)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// DO NOTHING не вернул строку — администратор уже был.
 			return false, nil
 		}
 		return false, fmt.Errorf("postgres: создание администратора: %w", err)
@@ -91,7 +82,6 @@ func (r *AdminRepo) EnsureAdmin(ctx context.Context, a Admin) (bool, error) {
 	return true, nil
 }
 
-// Audit записывает действие администратора в журнал.
 func (r *AdminRepo) Audit(ctx context.Context, actor, action, entity string, payload any) error {
 	if actor == "" || action == "" || entity == "" {
 		return errors.New("postgres: Audit: actor, action и entity обязательны")
@@ -116,7 +106,6 @@ func (r *AdminRepo) Audit(ctx context.Context, actor, action, entity string, pay
 	return nil
 }
 
-// ListAudit читает последние записи журнала по сущности, новые первыми.
 func (r *AdminRepo) ListAudit(ctx context.Context, entity string, limit int) ([]AuditEntry, error) {
 	const maxLimit = 1000
 	if limit <= 0 || limit > maxLimit {

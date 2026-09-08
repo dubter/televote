@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -22,8 +22,7 @@ import (
 	"github.com/dubter/televote/pkg/health"
 )
 
-// selfHealthcheck дёргает /readyz собственного процесса.
-func selfHealthcheck() int {
+func SelfHealthcheck() int {
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -53,8 +52,6 @@ func selfHealthcheck() int {
 	return 0
 }
 
-// pgxpoolWrapper прячет пул за узким интерфейсом: наружу нужны только
-// проверка готовности и закрытие.
 type pgxpoolWrapper struct{ pool *pgxpool.Pool }
 
 func openPool(ctx context.Context, dsn string, maxConns int32) (*pgxpoolWrapper, error) {
@@ -75,7 +72,6 @@ func netDialer(timeout time.Duration) net.Dialer {
 	return net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
 }
 
-// kafkaLag сообщает снапшотеру, сколько сообщений ещё не обработано.
 type kafkaLag struct {
 	client *kgo.Client
 	topic  string
@@ -110,7 +106,6 @@ func (k kafkaLag) Lag(ctx context.Context) (int64, error) {
 	return total, nil
 }
 
-// datacenterRanges читает список датацентровых сетей.
 func (a *app) datacenterRanges() []netip.Prefix {
 	if !a.cfg.ASNBlockEnabled {
 		return nil
@@ -141,7 +136,6 @@ func (a *app) datacenterRanges() []netip.Prefix {
 	return out
 }
 
-// adminJWTBytes превращает ключ из конфига в байты подписи.
 func adminJWTBytes(raw string) []byte {
 	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) >= 32 {
 		return decoded
@@ -150,11 +144,10 @@ func adminJWTBytes(raw string) []byte {
 	return sum[:]
 }
 
-// countingObserver приводит метрики к интерфейсу consumer.Observer:
-// у консьюмера сигнатуры с контекстом, у метрик — без.
 type countingObserver struct{ m *metrics.Metrics }
 
 func (o countingObserver) VoteCounted(ctx context.Context, r vote.Result) { o.m.VoteCounted(ctx, r) }
 func (o countingObserver) VoteRejected(ctx context.Context, reason string) {
 	o.m.VoteRejectedCtx(ctx, reason)
 }
+func (o countingObserver) ApplySeconds(d float64) { o.m.ApplySeconds(d) }

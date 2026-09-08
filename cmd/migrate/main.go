@@ -1,4 +1,3 @@
-// Команда migrate применяет схему Postgres.
 package main
 
 import (

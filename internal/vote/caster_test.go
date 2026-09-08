@@ -14,9 +14,6 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// Инвариант из CLAUDE.md, выраженный в типе: провалившийся вызов возвращает
-// нулевой Result, и он не должен выглядеть успехом. Если бы Counted был нулём,
-// `res, err := Cast(...)`, где err проигнорировали, читался бы как «посчитан».
 func TestResult_ZeroValueIsNotSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +36,6 @@ func TestResult_ZeroValueIsNotSuccess(t *testing.T) {
 func TestNewCaster_RejectsBrokenDependencies(t *testing.T) {
 	t.Parallel()
 
-	// Клиент нужен непустой: nil дал бы панику на первом голосе в эфире.
 	_, err := vote.NewCaster(nil, 30*time.Minute, 0.1)
 	require.Error(t, err)
 
@@ -70,8 +66,6 @@ func TestNewCaster_RejectsBrokenDependencies(t *testing.T) {
 	require.NotNil(t, c)
 }
 
-// Аргументы проверяются до Redis: пустой набор выбора создал бы бюллетень без
-// голосов и завысил бы знаменатель процентов.
 func TestCast_RejectsInvalidArgumentsBeforeRedis(t *testing.T) {
 	t.Parallel()
 
@@ -103,9 +97,6 @@ func TestCast_RejectsInvalidArgumentsBeforeRedis(t *testing.T) {
 	}
 }
 
-// Консьюмер по этому предикату решает, ретраить или нет. Ошибка в
-// классификации стоит дорого в обе стороны: ретрай неретраябельного заклинит
-// партицию, а отказ от ретрая транзиентной ошибки потеряет голос.
 func TestIsRetryable_ClassifiesRedisAndContextErrors(t *testing.T) {
 	t.Parallel()
 

@@ -10,15 +10,10 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// errorResponse — единый формат ошибки. Код совпадает с текстом доменной
-// ошибки, поэтому расхождение таблицы ответов и кода заметно глазами.
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-// writeJSONError отдаёт ошибку. Результат Encode игнорируется намеренно:
-// заголовки уже отправлены, и обрыв соединения на этом месте — событие
-// клиента, а не сервера.
 func writeJSONError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -31,7 +26,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body) //nolint:errcheck,errchkjson // заголовки отправлены, обрыв — событие клиента
 }
 
-// WriteError — ЕДИНСТВЕННАЯ точка перевода доменных ошибок в HTTP-коды.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := classify(err)
 
@@ -48,7 +42,6 @@ func classify(err error) (status int, code string) {
 	case err == nil:
 		return http.StatusOK, ""
 
-	// 400 — запрос некорректен сам по себе.
 	case errors.Is(err, domain.ErrInvalidChoices),
 		errors.Is(err, vote.ErrInvalidArgs),
 		errors.Is(err, vote.ErrBadClientID),
@@ -56,7 +49,6 @@ func classify(err error) (status int, code string) {
 		errors.Is(err, errBadRequest):
 		return http.StatusBadRequest, "invalid_choices"
 
-	// 409 — запрос корректен, а состояние опроса нет.
 	case errors.Is(err, domain.ErrPollClosed):
 		return http.StatusConflict, "poll_closed"
 	case errors.Is(err, domain.ErrOptionsImmutable):
@@ -81,7 +73,6 @@ func classify(err error) (status int, code string) {
 	}
 }
 
-// Транспортные ошибки слоя. Доменных среди них нет: домен не знает про HTTP.
 var (
 	errBadRequest   = errors.New("bad_request")
 	errNotFound     = errors.New("not_found")

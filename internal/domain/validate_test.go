@@ -12,8 +12,6 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// options строит n опций с плотными индексами 0..n-1 — ровно так их пишет
-// админка, и на плотность опирается проверка «индекс за пределами списка».
 func options(n int) []domain.Option {
 	out := make([]domain.Option, 0, n)
 	for i := range n {
@@ -151,7 +149,6 @@ func TestValidateChoices(t *testing.T) {
 			wantErr: domain.ErrInvalidChoices,
 		},
 		{
-			// MaxChoices=0 — не «голосовать нельзя», а «потолок не задан».
 			name:    "нулевой MaxChoices трактуется как отсутствие потолка",
 			poll:    multiplePoll(4, 0, 0),
 			choices: []uint8{0, 1, 2, 3},
@@ -183,8 +180,6 @@ func TestValidateChoices(t *testing.T) {
 	}
 }
 
-// Горячий путь валидирует голос по HotConfig, а не по строке опроса.
-// Правило обязано быть одно, иначе две копии разъедутся молча.
 func TestChoiceRules_MatchPollValidation(t *testing.T) {
 	t.Parallel()
 
@@ -252,7 +247,6 @@ func TestIsOpenAt(t *testing.T) {
 			at:   opens.Add(time.Second),
 		},
 		{
-			// Пустой ClosesAt — незаполненный конфиг, а не «голосуем вечно».
 			name: "незаданный ClosesAt закрыт",
 			poll: &domain.Poll{Status: domain.StatusOpen, OpensAt: opens},
 			at:   opens.Add(time.Second),
@@ -267,9 +261,6 @@ func TestIsOpenAt(t *testing.T) {
 	}
 }
 
-// Момент ClosesAt принадлежит закрытому опросу. Правило зафиксировано планом
-// (Task 2, шаг 6) и отдельным тестом, потому что «<» вместо «<=» не даёт
-// ни ошибки компиляции, ни падения — только лишние голоса после эфира.
 func TestIsOpenAt_VoteExactlyAtClosesAtIsRejected(t *testing.T) {
 	t.Parallel()
 
@@ -318,7 +309,6 @@ func TestShouldOpenAt(t *testing.T) {
 		{name: "closed не открывается по расписанию", poll: withStatus(domain.StatusClosed), at: opens.Add(time.Second)},
 		{name: "archived не открывается по расписанию", poll: withStatus(domain.StatusArchived), at: opens.Add(time.Second)},
 		{
-			// Расписания нет — открывать нечему; такой опрос открывает админ руками.
 			name: "scheduled без OpensAt не открывается сам",
 			poll: &domain.Poll{Status: domain.StatusScheduled, ClosesAt: closes},
 			at:   opens.Add(time.Second),
@@ -333,8 +323,6 @@ func TestShouldOpenAt(t *testing.T) {
 	}
 }
 
-// Планировщик выполняет переход через тот же FSM. Если ShouldOpenAt скажет
-// «пора», а CanTransitionTo откажет, опрос не откроется и никто не заметит.
 func TestShouldOpenAt_AgreesWithFSM(t *testing.T) {
 	t.Parallel()
 

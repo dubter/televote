@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// PollSpec — запрос на создание опроса, как его формулирует администратор.
-// Транспорт (HTTP, CLI, тест) заполняет спецификацию, правила проверяет домен.
 type PollSpec struct {
 	Slug               string
 	Question           string
@@ -25,10 +23,8 @@ type PollSpec struct {
 	RedisMasters       int
 }
 
-// MinOptions — меньше двух вариантов делают опрос бессмысленным.
 const MinOptions = 2
 
-// NewPoll собирает опрос из спецификации, проверяя правила предметной области.
 func NewPoll(spec PollSpec, now time.Time, minLeadTime time.Duration) (*Poll, error) {
 	if err := spec.validate(now, minLeadTime); err != nil {
 		return nil, err
@@ -67,7 +63,6 @@ func NewPoll(spec PollSpec, now time.Time, minLeadTime time.Duration) (*Poll, er
 	}, nil
 }
 
-// ErrInvalidPoll — спецификация не проходит правила предметной области.
 var ErrInvalidPoll = fmt.Errorf("invalid_poll")
 
 func (s PollSpec) validate(now time.Time, minLeadTime time.Duration) error {
@@ -109,7 +104,6 @@ func (s PollSpec) validate(now time.Time, minLeadTime time.Duration) error {
 		return fmt.Errorf("%w: closes_at не позже opens_at", ErrInvalidPoll)
 	}
 
-	// Ёмкость под эфир поднимается по расписанию и раньше не успеет.
 	if minLeadTime > 0 && s.OpensAt.Sub(now) < minLeadTime {
 		return fmt.Errorf("%w: опрос открывается раньше чем через %s, ёмкость не успеет подняться",
 			ErrInvalidPoll, minLeadTime)
@@ -117,7 +111,6 @@ func (s PollSpec) validate(now time.Time, minLeadTime time.Duration) error {
 	return nil
 }
 
-// ExpectedVotes — ожидаемое число голосов: аудитория × конверсия.
 func (p *Poll) ExpectedVotes() int64 {
 	v := float64(p.ExpectedAudience) * p.ExpectedConversion
 	switch {

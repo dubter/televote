@@ -69,7 +69,9 @@ linters:
 
     revive:
       rules:
-        - name: exported
+        # Правило exported выключено осознанно: имена и сигнатуры несут смысл
+        # сами, а doc-комментарий к каждому экспортируемому символу
+        # превращается в пересказ кода.
         - name: context-as-argument
         - name: context-keys-type
         - name: error-return

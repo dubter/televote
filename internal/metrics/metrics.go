@@ -1,6 +1,3 @@
-// Package metrics определяет бизнес-метрики сервиса.
-//
-// Набор лейблов у каждой метрики конечен и не содержит пользовательских данных:
 package metrics
 
 import (
@@ -12,7 +9,6 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// Metrics — счётчики приёма, подсчёта и дренажа.
 type Metrics struct {
 	votesAccepted  prometheus.Counter
 	votesRejected  *prometheus.CounterVec
@@ -23,7 +19,6 @@ type Metrics struct {
 	ballotsTotal   *prometheus.GaugeVec
 }
 
-// New регистрирует метрики в переданном регистраторе.
 func New(reg prometheus.Registerer) *Metrics {
 	f := promauto.With(reg)
 
@@ -61,34 +56,24 @@ func New(reg prometheus.Registerer) *Metrics {
 	}
 }
 
-// VoteAccepted — голос принят и отправлен в Kafka.
 func (m *Metrics) VoteAccepted() { m.votesAccepted.Inc() }
 
-// VoteRejected — голос отвергнут. Причина берётся из конечного набора.
 func (m *Metrics) VoteRejected(reason string) { m.votesRejected.WithLabelValues(reason).Inc() }
 
-// VoteCounted — консьюмер применил голос.
 func (m *Metrics) VoteCounted(_ context.Context, result vote.Result) {
 	m.votesCounted.WithLabelValues(result.String()).Inc()
 }
 
-// VoteRejectedCtx — вариант с контекстом для consumer.Observer.
 func (m *Metrics) VoteRejectedCtx(_ context.Context, reason string) {
 	m.VoteRejected(reason)
 }
 
-// ProduceSeconds — время отправки в Kafka.
 func (m *Metrics) ProduceSeconds(d float64) { m.produceLatency.Observe(d) }
 
-// ApplySeconds — время применения голоса в Redis.
 func (m *Metrics) ApplySeconds(d float64) { m.applyLatency.Observe(d) }
 
-// SetConsumerLag — текущий лаг. По нему KEDA скейлит консьюмеров, а
-// снапшотер решает, что дренаж окончен.
 func (m *Metrics) SetConsumerLag(n int64) { m.consumerLag.Set(float64(n)) }
 
-// SetBallots — бюллетеней в последнем снимке. Лейбл — slug опроса: их единицы,
-// кардинальность ограничена числом активных эфиров.
 func (m *Metrics) SetBallots(pollSlug string, n int64) {
 	m.ballotsTotal.WithLabelValues(pollSlug).Set(float64(n))
 }

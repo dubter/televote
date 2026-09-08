@@ -15,15 +15,12 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// SaltLen — длина соли опроса в байтах. Сама соль лежит в domain.Poll.Salt:
 const SaltLen = 32
 
-// PollRepo — доступ к конфигурации опросов.
 type PollRepo struct {
 	db *pgxpool.Pool
 }
 
-// NewPollRepo создаёт репозиторий опросов.
 func NewPollRepo(db *pgxpool.Pool) (*PollRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: PollRepo без пула соединений")
@@ -31,26 +28,18 @@ func NewPollRepo(db *pgxpool.Pool) (*PollRepo, error) {
 	return &PollRepo{db: db}, nil
 }
 
-// Порядок колонок в pollColumns и в scanPollRow обязан совпадать. Одна строка
-// на оба места именно для того, чтобы добавленная колонка ломала сборку, а не
-// сдвигала значения молча.
 const pollColumns = `p.id, p.slug, p.question, p.type, p.min_choices, p.max_choices,
 	p.status, p.opens_at, p.closes_at, p.shard_count,
 	p.expected_audience, p.expected_conversion, p.salt,
 	p.results_visible_during_voting, p.version`
 
-// Предикаты выборки. Вынесены в константы, потому что каждый используется
-// дважды — для опросов и для их опций, — и разъехавшиеся копии дали бы опрос с
-// чужими опциями.
 const (
 	predPollByID   = `p.id = $1`
 	predPollBySlug = `p.slug = $1`
 
-	// predPollActive совпадает с предикатом частичного индекса polls_active_idx.
 	predPollActive = `p.status IN ('scheduled', 'open')`
 )
 
-// Create создаёт опрос со всеми полями control plane.
 func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 	if row == nil {
 		return errors.New("postgres: CreateRow без опроса")
@@ -97,8 +86,6 @@ func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 			return err
 		}
 
-		// unnest вместо цикла Exec: 255 опций — это 255 round trip внутри
-		// транзакции, то есть открытая транзакция на всё это время.
 		const insertOptions = `
 			INSERT INTO poll_options (poll_id, idx, text)
 			SELECT $1, t.idx, t.text FROM unnest($2::smallint[], $3::text[]) AS t(idx, text)`
@@ -117,17 +104,14 @@ func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 	return nil
 }
 
-// GetBySlug читает опрос по слагу.
 func (r *PollRepo) GetBySlug(ctx context.Context, slug string) (*domain.Poll, error) {
 	return r.one(ctx, predPollBySlug, slug)
 }
 
-// ListActive возвращает опросы, которые могут получить голоса: scheduled и open.
 func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return r.many(ctx, predPollActive)
 }
 
-// Transition переводит опрос в статус to при совпадении версии.
 func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error {
 	if !to.Valid() {
 		return fmt.Errorf("postgres: неизвестный статус %q: %w", to, domain.ErrBadTransition)
@@ -156,7 +140,6 @@ func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Statu
 	}
 }
 
-// HasCountedVotes сообщает, есть ли у опроса уже посчитанные голоса.
 func (r *PollRepo) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error) {
 	const q = `
 		SELECT EXISTS (SELECT 1 FROM poll_results WHERE poll_id = $1 AND votes > 0)
@@ -169,7 +152,6 @@ func (r *PollRepo) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, err
 	return has, nil
 }
 
-// one читает ровно один опрос по предикату.
 func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.Poll, error) {
 	rows, err := r.many(ctx, pred, args...)
 	if err != nil {
@@ -181,7 +163,6 @@ func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.P
 	return rows[0], nil
 }
 
-// many читает опросы по предикату и подшивает к ним опции.
 func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domain.Poll, error) {
 	q := `SELECT ` + pollColumns + ` FROM polls p WHERE ` + pred + ` ORDER BY p.opens_at, p.id`
 
@@ -228,7 +209,6 @@ func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domai
 		}
 		row, ok := byID[pollID]
 		if !ok {
-			// Опрос появился между двумя запросами: его опции нам не нужны.
 			continue
 		}
 		if idx < 0 || idx > domain.MaxOptions {
@@ -244,7 +224,6 @@ func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domai
 	return out, nil
 }
 
-// scanPollRow разбирает строку в PollRow.
 func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	var (
 		row        domain.Poll
@@ -277,7 +256,6 @@ func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 		return nil, fmt.Errorf("опрос %s: min/max choices %d/%d вне uint8", row.ID, minChoices, maxChoices)
 	}
 	if shardCount < 1 || shardCount > domain.MaxShardCount {
-		// Ноль здесь — паника деления на ноль на горячем пути: shard = hash % shard_count.
 		return nil, fmt.Errorf("опрос %s: shard_count %d вне 1..%d", row.ID, shardCount, domain.MaxShardCount)
 	}
 	if version < 1 || version > math.MaxUint32 {
@@ -291,7 +269,6 @@ func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	return &row, nil
 }
 
-// sortedIndexes возвращает индексы опций агрегата по возрастанию.
 func sortedIndexes(votes map[uint8]int64) []uint8 {
 	out := make([]uint8, 0, len(votes))
 	for idx := range votes {

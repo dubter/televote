@@ -33,8 +33,6 @@ func TestFR2_ShortLinkServesVotingPage(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "<noscript>", "страница обязана быть осмысленной без JS")
 }
 
-// 30 млн загрузок означают, что лишний килобайт — это 30 ГБ трафика за минуту,
-// а CDN дороже всего вычислительного вместе взятого.
 func TestVotePage_UnderEightKilobytesGzipped(t *testing.T) {
 	t.Parallel()
 
@@ -47,9 +45,6 @@ func TestVotePage_UnderEightKilobytesGzipped(t *testing.T) {
 	assert.Less(t, buf.Len(), 8*1024, "страница голосования раздулась: %d байт gzip", buf.Len())
 }
 
-// sessionStorage живёт до закрытия вкладки: F5 в той же вкладке прошёл бы,
-// а новая вкладка дала бы второй голос. Разработчик, проверяющий обновлением
-// страницы, этого не увидит — поэтому проверяет тест.
 func TestVotePage_UsesLocalStorageNotSession(t *testing.T) {
 	t.Parallel()
 
@@ -60,8 +55,6 @@ func TestVotePage_UsesLocalStorageNotSession(t *testing.T) {
 		"идентификатор голосующего обязан переживать закрытие вкладки")
 }
 
-// Внешний ресурс — это лишний round-trip на мобильной сети и лишняя точка
-// отказа ровно в ту минуту, когда всё решается.
 func TestVotePage_HasNoExternalResources(t *testing.T) {
 	t.Parallel()
 

@@ -1,4 +1,3 @@
-// Package consumer применяет принятые голоса: подсчёт и анализ накрутки.
 package consumer
 
 import (
@@ -17,26 +16,20 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// Applier применяет голос в хранилище счётчиков.
 type Applier interface {
 	Cast(ctx context.Context, pollID uuid.UUID, shardCount uint16, v vote.VoterID, choices []uint8) (vote.Result, error)
 }
 
-// ConfigLookup отдаёт конфиг опроса по идентификатору: из Kafka приходит
-// pollID, а не slug.
 type ConfigLookup interface {
 	ByID(id uuid.UUID) (*pollcfg.HotConfig, bool)
 }
 
-// Observer получает исход каждого применённого сообщения.
 type Observer interface {
 	VoteCounted(ctx context.Context, result vote.Result)
 	VoteRejected(ctx context.Context, reason string)
+	ApplySeconds(d float64)
 }
 
-// Причины отказа. Набор конечный и не содержит пользовательских данных:
-// значения уходят в метку метрики, и произвольная строка взорвала бы
-// кардинальность.
 const (
 	reasonMalformed   = "malformed"
 	reasonUnknownPoll = "unknown_poll"
@@ -44,7 +37,6 @@ const (
 	reasonBadVoterID  = "bad_voter_id"
 )
 
-// Counting считает голоса: читает Kafka и применяет их в Redis.
 type Counting struct {
 	client  *kgo.Client
 	applier Applier
@@ -54,11 +46,9 @@ type Counting struct {
 
 	retryBudget time.Duration
 
-	// lookupBudget — сколько ждать появления конфига опроса в кэше.
 	lookupBudget time.Duration
 }
 
-// NewCounting собирает консьюмер подсчёта.
 func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs Observer, log *slog.Logger) (*Counting, error) {
 	switch {
 	case client == nil:
@@ -82,13 +72,11 @@ func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs O
 	}, nil
 }
 
-// Run читает и применяет голоса до отмены контекста.
 func (c *Counting) Run(ctx context.Context) error {
 	for ctx.Err() == nil {
 		fetches := c.client.PollFetches(ctx)
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
-				// Отмена контекста — штатная остановка, а не отказ.
 				if errors.Is(e.Err, context.Canceled) {
 					return nil //nolint:nilerr
 				}
@@ -103,7 +91,6 @@ func (c *Counting) Run(ctx context.Context) error {
 		})
 
 		if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
-			// Незакоммиченные оффсеты означают повторную доставку, а не потерю.
 			c.log.WarnContext(ctx, "consumer: коммит оффсетов не удался",
 				slog.String("error", err.Error()))
 		}
@@ -135,7 +122,11 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 
+	start := time.Now()
 	res, err := c.applyWithRetry(ctx, cfg, voterID, msg.Choices)
+	if c.obs != nil {
+		c.obs.ApplySeconds(time.Since(start).Seconds())
+	}
 	if err != nil {
 		c.log.ErrorContext(ctx, "consumer: голос не применён",
 			slog.String("poll", msg.PollID.String()), slog.String("error", err.Error()))
@@ -146,7 +137,6 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	}
 }
 
-// awaitConfig ждёт появления конфига опроса в кэше.
 func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.HotConfig, bool) {
 	if cfg, ok := c.lookup.ByID(pollID); ok {
 		return cfg, true
@@ -166,7 +156,6 @@ func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.
 	return nil, false
 }
 
-// applyWithRetry повторяет применение, пока ошибка транзиентна и есть бюджет.
 func (c *Counting) applyWithRetry(
 	ctx context.Context,
 	cfg *pollcfg.HotConfig,

@@ -26,9 +26,7 @@ func TestCapacityFor(t *testing.T) {
 			votes: thirtyMillion,
 			drain: 5 * time.Minute,
 			check: func(t *testing.T, c domain.Capacity) {
-				// Пик: 30 млн × 50 % / 15 с = 1M RPS, с запасом — около 30 подов.
 				assert.InDelta(t, 30, c.VoteAPI, 6, "приём считается по пику")
-				// Дренаж: 30 млн / 300 с = 100k/с, с запасом — 3 мастера.
 				assert.InDelta(t, 3, c.RedisMasters, 2, "дренаж за 5 минут")
 			},
 		},
@@ -37,7 +35,6 @@ func TestCapacityFor(t *testing.T) {
 			votes: thirtyMillion,
 			drain: time.Minute,
 			check: func(t *testing.T, c domain.Capacity) {
-				// 30 млн / 60 с = 500k/с, с запасом — около 13 мастеров.
 				assert.Greater(t, c.RedisMasters, 10, "минутный дренаж требует кратно больше мастеров")
 			},
 		},
@@ -60,8 +57,6 @@ func TestCapacityFor(t *testing.T) {
 	}
 }
 
-// Приём масштабируется под пик, подсчёт — под дренаж. Длиннее дренаж —
-// меньше Redis: это главный рычаг «стоимость против задержки результата».
 func TestCapacityFor_LongerDrainNeedsFewerMasters(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +80,6 @@ func TestCapacityFor_IsMonotonic(t *testing.T) {
 	}
 }
 
-// Партиций не меньше, чем консьюмеров: партиция обрабатывается одним членом
-// группы, поэтому лишние консьюмеры просто простаивали бы.
 func TestCapacityFor_PartitionsCoverConsumers(t *testing.T) {
 	t.Parallel()
 

@@ -15,8 +15,6 @@ import (
 	"github.com/dubter/televote/internal/config"
 )
 
-// minimalEnv — тот минимум, без которого сервис не имеет права стартовать.
-// Всё остальное обязано подставиться дефолтами, совпадающими с .env.example.
 func minimalEnv() map[string]string {
 	return map[string]string{
 		"REDIS_ADDRS":   "redis-1:6379,redis-2:6379",
@@ -37,7 +35,6 @@ func envWith(overrides map[string]string) map[string]string {
 	return e
 }
 
-// productionEnv — валидная production-конфигурация: ни одного дефолтного секрета.
 func productionEnv() map[string]string {
 	return envWith(map[string]string{
 		"ENV":                      "production",
@@ -199,8 +196,6 @@ func TestLoad_ProductionAcceptsRealSecrets(t *testing.T) {
 	assert.True(t, cfg.IsProduction())
 }
 
-// В dev дефолты из .env.example обязаны заводиться как есть: иначе `make demo`
-// требует ручных шагов, а он не должен.
 func TestLoad_DevAcceptsPlaceholderSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -215,9 +210,6 @@ func TestLoad_DevAcceptsPlaceholderSecrets(t *testing.T) {
 	assert.True(t, cfg.UsesInsecureDefaults(), "main.go обязан предупредить об этом в логе")
 }
 
-// Первый пункт таблицы тихих отказов в CLAUDE.md: ключ дедупа, истекающий
-// раньше токена, открывает окно для replay. Проверяем с учётом джиттера —
-// эффективный TTL уходит вниз на DEDUP_TTL_JITTER.
 func TestLoad_DedupTTLMustOutliveDrainWindow(t *testing.T) {
 	t.Parallel()
 
@@ -300,7 +292,6 @@ func TestLoad_RejectsInvalidValues(t *testing.T) {
 	}
 }
 
-// pprof, открытый наружу, — это дамп памяти процесса по HTTP.
 func TestLoad_ProductionRejectsPubliclyBoundDebugAddr(t *testing.T) {
 	t.Parallel()
 
@@ -366,7 +357,6 @@ func TestKafkaConfig_Validation(t *testing.T) {
 	t.Run("группы подсчёта и анализа обязаны различаться", func(t *testing.T) {
 		t.Parallel()
 
-		// Одна группа означала бы, что анализ забирает сообщения у подсчёта:
 		_, err := config.LoadFrom(envWith(map[string]string{
 			"KAFKA_CONSUMER_GROUP": "same",
 			"KAFKA_FRAUD_GROUP":    "same",
@@ -382,8 +372,6 @@ func TestKafkaConfig_Validation(t *testing.T) {
 	})
 }
 
-// Контракт: .env.example — единственный источник правды про переменные.
-// Если в него добавили переменную, а в Config — нет, тест обязан упасть.
 func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {
 	t.Parallel()
 

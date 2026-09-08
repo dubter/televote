@@ -8,9 +8,6 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// allStatuses — полный набор статусов плюс заведомо несуществующий:
-// значение из базы приходит строкой, и «paused» вместо паники должно
-// просто никуда не переходить.
 var allStatuses = []domain.Status{
 	domain.StatusDraft,
 	domain.StatusScheduled,
@@ -58,8 +55,6 @@ func TestCanTransitionTo(t *testing.T) {
 	}
 }
 
-// Переход в собственный статус — не переход. Разрешить его значит позволить
-// «открыть открытый» и получить лишнюю запись в admin_audit на пустом месте.
 func TestCanTransitionTo_SelfTransitionIsRejected(t *testing.T) {
 	t.Parallel()
 
@@ -68,8 +63,6 @@ func TestCanTransitionTo_SelfTransitionIsRejected(t *testing.T) {
 	}
 }
 
-// archived — терминальный статус. Проверяем весь набор, а не пару примеров:
-// один забытый выход из архива возвращает опрос в эфир.
 func TestCanTransitionTo_ArchivedIsTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -79,8 +72,6 @@ func TestCanTransitionTo_ArchivedIsTerminal(t *testing.T) {
 	}
 }
 
-// Таблица переходов исчерпывающая: разрешено ровно четыре пары, всё остальное
-// запрещено по умолчанию. Тест ловит расширение FSM без обновления спецификации.
 func TestCanTransitionTo_OnlyFourTransitionsAreAllowed(t *testing.T) {
 	t.Parallel()
 

@@ -17,7 +17,7 @@ func main() {
 		os.Exit(app.SelfHealthcheck())
 	}
 
-	if err := app.Run(context.Background(), app.RoleAll); err != nil {
+	if err := app.Run(context.Background(), app.RoleConsumer); err != nil {
 		slog.Error("сервис остановлен с ошибкой", slog.Any("error", err))
 		os.Exit(1)
 	}

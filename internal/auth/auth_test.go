@@ -38,8 +38,6 @@ func TestVerify_WrongPassword(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// Одинаковые пароли обязаны давать разные хэши: одинаковые выдали бы, что у
-// двух администраторов совпадает пароль, ещё до его подбора.
 func TestHashPassword_IsSalted(t *testing.T) {
 	t.Parallel()
 
@@ -119,8 +117,6 @@ func TestParse_RejectsTamperedAndForeignTokens(t *testing.T) {
 	}
 }
 
-// alg=none — классический обход JWT: подпись объявляется отсутствующей, и
-// сервер, не проверяющий метод, принимает любую полезную нагрузку.
 func TestParse_RejectsAlgNone(t *testing.T) {
 	t.Parallel()
 
@@ -142,8 +138,6 @@ func TestParse_RejectsAlgNone(t *testing.T) {
 	assert.ErrorIs(t, err, auth.ErrInvalidToken)
 }
 
-// Сравнение строк дало бы «admin < editor < viewer» по алфавиту — ровно
-// обратный порядок прав, то есть viewer стал бы самой сильной ролью.
 func TestRole_AtLeastOrdering(t *testing.T) {
 	t.Parallel()
 
@@ -157,8 +151,6 @@ func TestRole_AtLeastOrdering(t *testing.T) {
 	assert.False(t, auth.Role("").Valid())
 }
 
-// Без лимита попыток argon2id превращается из защиты в усилитель DoS:
-// каждая попытка стоит серверу десятки миллисекунд CPU и десятки мегабайт.
 func TestLoginLimiter_BlocksAfterN(t *testing.T) {
 	t.Parallel()
 
@@ -175,8 +167,6 @@ func TestLoginLimiter_BlocksAfterN(t *testing.T) {
 	assert.True(t, l.Allow("admin"), "после удачного входа счётчик обязан сбрасываться")
 }
 
-// Логин выбирает клиент, поэтому без потолка перебор несуществующих логинов
-// съел бы память процесса.
 func TestLoginLimiter_TableIsBounded(t *testing.T) {
 	t.Parallel()
 
@@ -187,7 +177,6 @@ func TestLoginLimiter_TableIsBounded(t *testing.T) {
 		l.Allow(strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune(i)))
 	}
 
-	// Лимитер обязан продолжать работать после переполнения таблицы.
 	for range 3 {
 		assert.True(t, l.Allow("после-переполнения"))
 	}

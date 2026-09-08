@@ -18,7 +18,6 @@ import (
 	"github.com/dubter/televote/internal/storage/postgres"
 )
 
-// PollStore — то, что админке нужно от хранилища опросов.
 type PollStore interface {
 	Create(ctx context.Context, p *domain.Poll) error
 	GetBySlug(ctx context.Context, slug string) (*domain.Poll, error)
@@ -27,20 +26,16 @@ type PollStore interface {
 	HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
-// ResultStore отдаёт результаты опроса.
 type ResultStore interface {
 	Get(ctx context.Context, pollID uuid.UUID) (domain.Aggregate, error)
 	GetAdjusted(ctx context.Context, pollID uuid.UUID) (domain.Aggregate, []string, error)
 }
 
-// AdminStore — учётные записи и аудит.
 type AdminStore interface {
 	ByLogin(ctx context.Context, login string) (*postgres.Admin, error)
 	Audit(ctx context.Context, actor, action, entity string, payload any) error
 }
 
-// AdminHandler обслуживает control plane: создание опросов и просмотр
-// результатов. На горячем пути не участвует.
 type AdminHandler struct {
 	polls   PollStore
 	results ResultStore
@@ -52,7 +47,6 @@ type AdminHandler struct {
 	minLeadTime time.Duration
 }
 
-// NewAdminHandler собирает админский обработчик.
 func NewAdminHandler(
 	polls PollStore, results ResultStore, admins AdminStore,
 	tokens *auth.TokenService, limiter *auth.LoginLimiter, now func() time.Time,
@@ -74,7 +68,6 @@ func NewAdminHandler(
 		tokens: tokens, limiter: limiter, now: now, minLeadTime: minLeadTime}, nil
 }
 
-// Routes отдаёт админские маршруты. Логин открыт, всё остальное под токеном.
 func (h *AdminHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.login)
@@ -98,7 +91,6 @@ type claimsKeyType int
 
 const claimsKey claimsKeyType = 0
 
-// requireRole пропускает запрос только с токеном нужного уровня.
 func (h *AdminHandler) requireRole(required auth.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +133,6 @@ type loginResponse struct {
 	Role  string `json:"role"`
 }
 
-// login выдаёт токен.
 func (h *AdminHandler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
@@ -233,8 +224,6 @@ func (h *AdminHandler) createPoll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toPollResponse(poll))
 }
 
-// toSpec переводит запрос в спецификацию домена. Правила проверяет домен —
-// здесь только перевод формата.
 func (r createPollRequest) toSpec() (domain.PollSpec, error) {
 	opensAt, err := time.Parse(time.RFC3339, r.OpensAt)
 	if err != nil {
@@ -282,7 +271,6 @@ func (h *AdminHandler) closePoll(w http.ResponseWriter, r *http.Request) {
 	h.transition(w, r, domain.StatusClosed, "close_poll")
 }
 
-// transition переводит опрос в новый статус через доменный FSM.
 func (h *AdminHandler) transition(w http.ResponseWriter, r *http.Request, to domain.Status, action string) {
 	slug := chi.URLParam(r, "slug")
 
@@ -363,8 +351,6 @@ func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// audit пишет действие администратора. Ошибка записи не отменяет само
-// действие, но и не остаётся незамеченной.
 func (h *AdminHandler) audit(r *http.Request, action, entity string, payload any) {
 	claims := claimsFrom(r.Context())
 	actor := "unknown"

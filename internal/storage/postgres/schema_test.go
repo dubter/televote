@@ -12,7 +12,6 @@ import (
 	"github.com/dubter/televote/migrations"
 )
 
-// applySchema накатывает те же миграции, что и продовый мигратор.
 func applySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -34,7 +33,6 @@ func applySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-// upSection вырезает часть между «+goose Up» и «+goose Down».
 func upSection(body string) string {
 	const (
 		up   = "-- +goose Up"
@@ -69,7 +67,6 @@ func indexAfter(s, sub string) int {
 	return -1
 }
 
-// stripStatementMarkers убирает служебные строки goose: в одном Exec они не нужны.
 func stripStatementMarkers(s string) string {
 	var out []byte
 	for line := range splitLines(s) {

@@ -1,5 +1,3 @@
-// Package postgres — адаптер control plane: конфигурация опросов, агрегат
-// результатов, администраторы и аудит.
 package postgres
 
 import (
@@ -13,31 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Ошибки адаптера. Сравнивать только через errors.Is: репозитории оставляют за
-// собой право обернуть сентинел деталями запроса.
 var (
 	ErrSlugTaken = errors.New("slug_taken")
 
-	// ErrVersionConflict — строку изменили между чтением и записью.
 	ErrVersionConflict = errors.New("version_conflict")
 
-	// ErrNotFound — запрошенной строки нет.
 	ErrNotFound = errors.New("not_found")
 )
 
-// Пул маленький: Postgres вне горячего пути.
 const (
 	defaultMaxConns = int32(10)
-	// Без дедлайна под с битым DSN «стартовал» бы минутами.
-	pingTimeout = 5 * time.Second
+	pingTimeout     = 5 * time.Second
 )
 
-// Option настраивает пул поверх параметров DSN.
 type Option func(*pgxpool.Config)
 
-// WithMaxConns задаёт размер пула. Значение ≤ 0 игнорируется: ноль соединений
-// означал бы пул, который никогда не отдаёт соединение, то есть вечное
-// ожидание вместо честной ошибки конфигурации.
 func WithMaxConns(n int32) Option {
 	return func(c *pgxpool.Config) {
 		if n > 0 {
@@ -46,7 +34,6 @@ func WithMaxConns(n int32) Option {
 	}
 }
 
-// NewPool поднимает пул соединений и проверяет его живость.
 func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, error) {
 	if dsn == "" {
 		return nil, errors.New("postgres: пустой DSN")
@@ -57,7 +44,6 @@ func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, er
 		return nil, fmt.Errorf("postgres: разбор DSN: %w", err)
 	}
 
-	// Параметры из DSN имеют приоритет над дефолтом, а Option — над DSN:
 	if cfg.MaxConns == 0 {
 		cfg.MaxConns = defaultMaxConns
 	}
@@ -85,8 +71,6 @@ func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, er
 	return pool, nil
 }
 
-// isUniqueViolation сообщает, что ошибка — нарушение уникального индекса с
-// именем constraint.
 func isUniqueViolation(err error, constraint string) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

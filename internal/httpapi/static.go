@@ -10,13 +10,9 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// Файлы страницы лежат внутри пакета: //go:embed не выходит за пределы
-// каталога своего пакета, поэтому web/ в корне репозитория сюда не встроить.
-//
 //go:embed web/vote.html web/admin.html
 var webFS embed.FS
 
-// StaticRoutes отдаёт страницу голосования, админку и QR-код.
 func StaticRoutes(publicBaseURL string) chi.Router {
 	r := chi.NewRouter()
 
@@ -45,8 +41,6 @@ func servePage(body []byte) http.HandlerFunc {
 	}
 }
 
-// qrHandler рисует QR-код со ссылкой на голосование — то, что показывают на
-// экране телевизора.
 func qrHandler(baseURL string) http.HandlerFunc {
 	base := strings.TrimSuffix(baseURL, "/")
 

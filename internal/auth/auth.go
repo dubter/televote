@@ -1,4 +1,3 @@
-// Package auth отвечает за доступ к админке: пароли, токены и роли.
 package auth
 
 import (
@@ -12,21 +11,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Ошибки аутентификации. Наружу все они превращаются в 401 без подробностей:
-// «нет такого логина» и «неверный пароль» — это подсказка перебору.
 var (
-	// ErrInvalidToken — подпись, срок или состав токена не годятся.
-	ErrInvalidToken = errors.New("invalid_token")
-	// ErrWeakKey — ключ подписи слишком короткий.
-	ErrWeakKey = errors.New("weak_signing_key")
-	// ErrTooManyAttempts — превышен лимит попыток входа.
+	ErrInvalidToken    = errors.New("invalid_token")
+	ErrWeakKey         = errors.New("weak_signing_key")
 	ErrTooManyAttempts = errors.New("too_many_attempts")
 )
 
-// minKeyLen — ключ короче этого не даёт HMAC осмысленной стойкости.
 const minKeyLen = 32
 
-// HashPassword считает argon2id-хэш.
 func HashPassword(plain string) (string, error) {
 	hash, err := argon2id.CreateHash(plain, argon2id.DefaultParams)
 	if err != nil {
@@ -35,7 +27,6 @@ func HashPassword(plain string) (string, error) {
 	return hash, nil
 }
 
-// VerifyPassword сверяет пароль с хэшем.
 func VerifyPassword(hash, plain string) (bool, error) {
 	ok, err := argon2id.ComparePasswordAndHash(plain, hash)
 	if err != nil {
@@ -44,27 +35,18 @@ func VerifyPassword(hash, plain string) (bool, error) {
 	return ok, nil
 }
 
-// Role — роль администратора.
 type Role string
 
-// Роли по возрастанию прав.
 const (
-	// RoleViewer — только чтение результатов.
 	RoleViewer Role = "viewer"
-	// RoleEditor — создание и ведение опросов.
 	RoleEditor Role = "editor"
-	// RoleAdmin — всё, включая управление пользователями и исключение голосов.
-	RoleAdmin Role = "admin"
+	RoleAdmin  Role = "admin"
 )
 
-// roleRank задаёт порядок явно. Сравнение строк дало бы «admin < editor <
-// viewer» по алфавиту, то есть ровно обратный порядок прав.
 var roleRank = map[Role]int{RoleViewer: 1, RoleEditor: 2, RoleAdmin: 3}
 
-// Valid сообщает, известна ли роль.
 func (r Role) Valid() bool { return roleRank[r] > 0 }
 
-// AtLeast сообщает, покрывает ли роль требуемый уровень.
 func (r Role) AtLeast(required Role) bool {
 	have, ok := roleRank[r]
 	if !ok {
@@ -77,13 +59,11 @@ func (r Role) AtLeast(required Role) bool {
 	return have >= need
 }
 
-// Claims — полезная нагрузка админского токена.
 type Claims struct {
 	Role Role `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// UserID возвращает идентификатор администратора.
 func (c *Claims) UserID() (uuid.UUID, error) {
 	id, err := uuid.Parse(c.Subject)
 	if err != nil {
@@ -92,14 +72,12 @@ func (c *Claims) UserID() (uuid.UUID, error) {
 	return id, nil
 }
 
-// TokenService выдаёт и проверяет админские токены.
 type TokenService struct {
 	key []byte
 	ttl time.Duration
 	now func() time.Time
 }
 
-// NewTokenService собирает сервис токенов.
 func NewTokenService(key []byte, ttl time.Duration) (*TokenService, error) {
 	if len(key) < minKeyLen {
 		return nil, fmt.Errorf("%w: длина %d, минимум %d", ErrWeakKey, len(key), minKeyLen)
@@ -110,7 +88,6 @@ func NewTokenService(key []byte, ttl time.Duration) (*TokenService, error) {
 	return &TokenService{key: key, ttl: ttl, now: time.Now}, nil
 }
 
-// Issue выдаёт токен администратору.
 func (t *TokenService) Issue(userID uuid.UUID, role Role) (string, error) {
 	if !role.Valid() {
 		return "", fmt.Errorf("auth: неизвестная роль %q", role)
@@ -133,7 +110,6 @@ func (t *TokenService) Issue(userID uuid.UUID, role Role) (string, error) {
 	return signed, nil
 }
 
-// Parse проверяет токен.
 func (t *TokenService) Parse(raw string) (*Claims, error) {
 	var claims Claims
 
@@ -155,7 +131,6 @@ func (t *TokenService) Parse(raw string) (*Claims, error) {
 	return &claims, nil
 }
 
-// LoginLimiter ограничивает попытки входа по логину.
 type LoginLimiter struct {
 	mu       sync.Mutex
 	attempts map[string]*attempt
@@ -170,7 +145,6 @@ type attempt struct {
 	until time.Time
 }
 
-// NewLoginLimiter собирает лимитер попыток входа.
 func NewLoginLimiter(limit int, window time.Duration, maxKeys int) *LoginLimiter {
 	if limit <= 0 {
 		limit = 5
@@ -190,7 +164,6 @@ func NewLoginLimiter(limit int, window time.Duration, maxKeys int) *LoginLimiter
 	}
 }
 
-// Allow сообщает, можно ли ещё пробовать войти под этим логином.
 func (l *LoginLimiter) Allow(login string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -209,7 +182,6 @@ func (l *LoginLimiter) Allow(login string) bool {
 	return a.count <= l.limit
 }
 
-// Reset снимает счётчик после удачного входа.
 func (l *LoginLimiter) Reset(login string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -222,7 +194,6 @@ func (l *LoginLimiter) evictExpiredLocked(now time.Time) {
 			delete(l.attempts, login)
 		}
 	}
-	// Если протухших не нашлось, таблица всё равно не растёт: чистим целиком.
 	if len(l.attempts) >= l.maxKeys {
 		clear(l.attempts)
 	}

@@ -1,5 +1,3 @@
-// Package snapshot переносит агрегат из Redis в Postgres и ведёт жизненный
-// цикл опроса по расписанию.
 package snapshot
 
 import (
@@ -14,30 +12,25 @@ import (
 	"github.com/dubter/televote/internal/domain"
 )
 
-// Aggregator читает счётчики опроса из Redis.
 type Aggregator interface {
 	Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uint16) (domain.Aggregate, error)
 }
 
-// Results хранит агрегат.
 type Results interface {
 	Upsert(ctx context.Context, pollID uuid.UUID, a domain.Aggregate) error
 	Get(ctx context.Context, pollID uuid.UUID) (domain.Aggregate, error)
 	SaveAdjusted(ctx context.Context, pollID uuid.UUID, a domain.Aggregate, excludedNets []string) error
 }
 
-// Polls даёт доступ к жизненному циклу опросов.
 type Polls interface {
 	ListActive(ctx context.Context) ([]*domain.Poll, error)
 	Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error
 }
 
-// LagReader сообщает, сколько сообщений опроса ещё не обработано.
 type LagReader interface {
 	Lag(ctx context.Context) (int64, error)
 }
 
-// Snapshotter ведёт агрегат и расписание опросов.
 type Snapshotter struct {
 	agg      Aggregator
 	results  Results
@@ -50,13 +43,11 @@ type Snapshotter struct {
 	obs      Observer
 }
 
-// Observer публикует наблюдаемое состояние дренажа.
 type Observer interface {
 	SetConsumerLag(n int64)
 	SetBallots(pollSlug string, n int64)
 }
 
-// Config — параметры снапшотера.
 type Config struct {
 	Interval time.Duration
 	Grace    time.Duration
@@ -65,7 +56,6 @@ type Config struct {
 	Observer Observer
 }
 
-// New собирает снапшотер.
 func New(agg Aggregator, results Results, polls Polls, lag LagReader, cfg Config) (*Snapshotter, error) {
 	switch {
 	case agg == nil:
@@ -94,7 +84,6 @@ func New(agg Aggregator, results Results, polls Polls, lag LagReader, cfg Config
 	}, nil
 }
 
-// Run ведёт цикл до отмены контекста.
 func (s *Snapshotter) Run(ctx context.Context) {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -112,8 +101,6 @@ func (s *Snapshotter) Run(ctx context.Context) {
 	}
 }
 
-// Tick обрабатывает все активные опросы: открывает по расписанию, снимает
-// агрегат, финализирует закончившиеся.
 func (s *Snapshotter) Tick(ctx context.Context) error {
 	polls, err := s.polls.ListActive(ctx)
 	if err != nil {
@@ -148,7 +135,6 @@ func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 		return err
 	}
 
-	// Финализация только после grace и только при нулевом лаге.
 	if now.Before(p.ClosesAt.Add(s.grace)) {
 		return nil
 	}
@@ -164,7 +150,6 @@ func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 	return s.Finalize(ctx, p, nil)
 }
 
-// TickOnce снимает агрегат опроса и кладёт его в Postgres.
 func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggregate, error) {
 	fresh, err := s.agg.Aggregate(ctx, p.ID, p.ShardCount)
 	if err != nil {
@@ -186,7 +171,6 @@ func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggr
 	return merged, nil
 }
 
-// Finalize фиксирует результат и закрывает опрос.
 func (s *Snapshotter) Finalize(ctx context.Context, p *domain.Poll, excludedNets []string) error {
 	final, err := s.TickOnce(ctx, p)
 	if err != nil {
@@ -204,7 +188,6 @@ func (s *Snapshotter) Finalize(ctx context.Context, p *domain.Poll, excludedNets
 	return nil
 }
 
-// drained сообщает, доехали ли все принятые голоса до Redis.
 func (s *Snapshotter) drained(ctx context.Context) (bool, error) {
 	if s.lag == nil {
 		s.log.WarnContext(ctx, "snapshot: источник consumer lag не задан, финализация по времени")

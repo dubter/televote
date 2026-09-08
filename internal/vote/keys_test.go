@@ -12,11 +12,8 @@ import (
 	"github.com/dubter/televote/internal/vote"
 )
 
-// testPollID фиксирован, чтобы имена ключей в ассертах не зависели от прогона.
 var testPollID = uuid.MustParse("6f1c9f2a-3b4d-4e5f-8a9b-0c1d2e3f4a5b")
 
-// deriveVoters выводит n детерминированных voterID: тесты распределения не
-// имеют права быть флаки, поэтому вход не случайный, а воспроизводимый.
 func deriveVoters(tb testing.TB, n int) []vote.VoterID {
 	tb.Helper()
 
@@ -30,9 +27,6 @@ func deriveVoters(tb testing.TB, n int) []vote.VoterID {
 	return out
 }
 
-// Инвариант из CLAUDE.md: дедуп-ключ и счётчик обязаны иметь общий hash tag.
-// Без него Redis Cluster отвечает CROSSSLOT, и скрипт не выполняется вовсе —
-// то есть голос не будет ни посчитан, ни отвергнут, он просто пропадёт.
 func TestDedupAndCounterKeys_ShareHashTag(t *testing.T) {
 	t.Parallel()
 
@@ -59,9 +53,6 @@ func TestDedupAndCounterKeys_ShareHashTag(t *testing.T) {
 	}
 }
 
-// Тот же инвариант, но выраженный так, как его видит Redis: одинаковый слот.
-// Сравнение тегов строкой поймало бы не всё — например тег без закрывающей
-// скобки строкой похож, а слот даёт другой.
 func TestVote_NoCrossSlotError(t *testing.T) {
 	t.Parallel()
 
@@ -94,8 +85,6 @@ func TestVote_NoCrossSlotError(t *testing.T) {
 	}
 }
 
-// Ключ дедупа и ключ счётчика различаются префиксом и не могут наложиться:
-// строковый SET по адресу хэша счётчика вернул бы WRONGTYPE и потерял голоса.
 func TestDedupAndCounterKeys_HaveDistinctPrefixes(t *testing.T) {
 	t.Parallel()
 
@@ -109,8 +98,6 @@ func TestDedupAndCounterKeys_HaveDistinctPrefixes(t *testing.T) {
 	assert.Contains(t, dedup, v.Hex(), "voterID должен адресовать дедуп-ключ")
 }
 
-// Соль у опросов разная, но и без соли ключи разных опросов не должны
-// пересекаться: pollID входит в тег.
 func TestHashTag_DiffersAcrossPollsAndShards(t *testing.T) {
 	t.Parallel()
 
@@ -137,8 +124,6 @@ func TestShardFor_Deterministic(t *testing.T) {
 	}
 }
 
-// Перекос между мастерами равен 1/√(шардов на мастера) (design.md §4), и вся
-// эта арифметика верна только если сама функция шардирования равномерна.
 func TestShardFor_UniformDistribution(t *testing.T) {
 	t.Parallel()
 
@@ -162,8 +147,6 @@ func TestShardFor_UniformDistribution(t *testing.T) {
 	}
 }
 
-// shardCount=0 приходит только из битого конфига, но деление на ноль на
-// горячем пути консьюмера уронило бы процесс и остановило дренаж.
 func TestShardFor_ZeroShardCountIsSafe(t *testing.T) {
 	t.Parallel()
 

@@ -1,4 +1,3 @@
-// Package httpapi содержит HTTP-слой: приём голоса, админку и middleware.
 package httpx
 
 import (
@@ -13,7 +12,6 @@ type ctxKey int
 
 const clientIPKey ctxKey = iota
 
-// ClientIP кладёт в контекст адрес клиента.
 func ClientIP(trusted []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,8 +22,6 @@ func ClientIP(trusted []netip.Prefix) func(http.Handler) http.Handler {
 	}
 }
 
-// IPFromContext возвращает адрес клиента. Невалидный адрес означает, что
-// middleware не отработал — вызывающий обязан это учитывать.
 func IPFromContext(ctx context.Context) netip.Addr {
 	addr, ok := ctx.Value(clientIPKey).(netip.Addr)
 	if !ok {
@@ -37,11 +33,9 @@ func IPFromContext(ctx context.Context) netip.Addr {
 func resolveClientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
 	peer := peerAddr(r.RemoteAddr)
 	if !peer.IsValid() || !isTrusted(peer, trusted) {
-		// Соединение пришло не от нашего ingress — заголовкам верить нельзя.
 		return peer
 	}
 
-	// Доверенный hop: берём последний недоверенный адрес справа налево.
 	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
 	for i := len(parts) - 1; i >= 0; i-- {
 		candidate, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
@@ -80,15 +74,12 @@ func isTrusted(addr netip.Addr, trusted []netip.Prefix) bool {
 	return false
 }
 
-// Размеры префиксов для лимитирования и агрегатов.
 const (
 	ipv6LimitBits = 64
 	net16Bits     = 16
-	// ipv6AggBits — у IPv6 /16 бессмысленна как «оператор».
-	ipv6AggBits = 32
+	ipv6AggBits   = 32
 )
 
-// LimitKey — ключ лимитирования: полный адрес для IPv4 и префикс /64 для IPv6.
 func LimitKey(a netip.Addr) string {
 	if !a.IsValid() {
 		return "unknown"
@@ -103,7 +94,6 @@ func LimitKey(a netip.Addr) string {
 	return prefix.String()
 }
 
-// Net16 — подсеть для агрегатов анализа накрутки.
 func Net16(a netip.Addr) string {
 	if !a.IsValid() {
 		return "unknown"

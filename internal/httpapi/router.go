@@ -13,21 +13,15 @@ import (
 	"github.com/dubter/televote/pkg/httpx"
 )
 
-// RouterConfig — то, что роутеру нужно снаружи.
 type RouterConfig struct {
-	// TrustedProxies — сети, чьему X-Forwarded-For можно верить.
-	TrustedProxies []netip.Prefix
-	// DatacenterRanges — датацентровые диапазоны: зритель ТВ оттуда не голосует.
+	TrustedProxies   []netip.Prefix
 	DatacenterRanges []netip.Prefix
-	// VoteRateLimit — частота на ключ лимита за окно.
-	VoteRateLimit int
-	RateWindow    time.Duration
-	// AllowedOrigins — источники для CORS. Пустой список означает same-origin.
-	AllowedOrigins []string
-	ServiceName    string
+	VoteRateLimit    int
+	RateWindow       time.Duration
+	AllowedOrigins   []string
+	ServiceName      string
 }
 
-// NewRouter собирает публичный и админский маршруты в один сервер.
 func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, cfg RouterConfig) http.Handler {
 	r := chi.NewRouter()
 

@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -26,26 +26,21 @@ import (
 	"github.com/dubter/televote/pkg/health"
 )
 
-// role — что делает процесс. В проде это разные деплойменты: приём
-// масштабируется под окно эфира, консьюмеры — под дренаж, и их графики
-// нагрузки не совпадают. В стенде одного процесса достаточно.
-type role string
+type Role string
 
 const (
-	roleAPI      role = "api"      // только приём голосов и админка
-	roleConsumer role = "consumer" // только подсчёт и снапшоты
-	roleAll      role = "all"      // всё сразу, для локального стенда
+	RoleAPI      Role = "api"
+	RoleConsumer Role = "consumer"
+	RoleAll      Role = "all"
 )
 
-func (r role) servesHTTP() bool { return r == roleAPI || r == roleAll }
-func (r role) consumes() bool   { return r == roleConsumer || r == roleAll }
+func (r Role) servesHTTP() bool { return r == RoleAPI || r == RoleAll }
+func (r Role) consumes() bool   { return r == RoleConsumer || r == RoleAll }
 
-// app — собранное приложение. Поля здесь только те, у которых есть жизненный
-// цикл: их нужно закрыть, проверить в /readyz или запустить в фоне.
 type app struct {
 	cfg    *config.Config
 	log    *slog.Logger
-	role   role
+	role   Role
 	router http.Handler
 
 	redis      rueidis.Client
@@ -63,8 +58,7 @@ type app struct {
 	advisor     *capacity.Advisor
 }
 
-// buildApp собирает зависимости в порядке «от внешних к внутренним».
-func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger, r role) (*app, error) {
+func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger, r Role) (*app, error) {
 	a := &app{cfg: cfg, log: log, role: r, metrics: metrics.New(prometheus.DefaultRegisterer)}
 
 	if err := a.connectStores(ctx); err != nil {
@@ -255,8 +249,6 @@ func (a *app) buildAdmin() (*httpapi.AdminHandler, error) {
 	return httpapi.NewAdminHandler(polls, results, admins, tokens, limiter, time.Now, a.cfg.PollMinLeadTime)
 }
 
-// bootstrapAdmin заводит первую учётную запись, если её ещё нет.
-//
 //nolint:contextcheck // выполняется на старте, до появления контекста запроса
 func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
 	if a.cfg.AdminBootstrapLogin == "" || a.cfg.AdminBootstrapPassword == "" {
@@ -283,7 +275,6 @@ func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
 	return nil
 }
 
-// runBackground поднимает фоновые задачи роли.
 func (a *app) runBackground(ctx context.Context) {
 	go a.cache.Run(ctx)
 
@@ -306,7 +297,6 @@ func (a *app) runBackground(ctx context.Context) {
 	}
 }
 
-// readiness — проверки для /readyz.
 func (a *app) readiness() []health.Checker {
 	checks := []health.Checker{a.pgRead.checker()}
 
@@ -323,8 +313,6 @@ func (a *app) readiness() []health.Checker {
 	return checks
 }
 
-// Close освобождает ресурсы в порядке, обратном захвату.
-//
 //nolint:contextcheck // вызывается после отмены корневого контекста: дренаж
 func (a *app) Close() {
 	var errs []error
