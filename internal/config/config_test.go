@@ -75,8 +75,7 @@ func TestLoad_DefaultsMatchEnvExample(t *testing.T) {
 
 	assert.Equal(t, []string{"kafka:9092"}, cfg.KafkaBrokers)
 	assert.Equal(t, "votes", cfg.KafkaTopic)
-	assert.NotEqual(t, cfg.KafkaConsumerGroup, cfg.KafkaFraudGroup,
-		"анализ обязан читать топик независимо от подсчёта")
+	assert.Equal(t, "televote-counting", cfg.KafkaConsumerGroup)
 	assert.Equal(t, 5*time.Millisecond, cfg.KafkaLinger)
 
 	assert.Equal(t, 30*time.Minute, cfg.DedupTTL)
@@ -269,7 +268,6 @@ func TestLoad_RejectsInvalidValues(t *testing.T) {
 		{name: "доля сэмплирования трейсов больше единицы", overrides: map[string]string{"OTEL_TRACE_SAMPLE_RATIO": "1.5"}, wantErr: "OTEL_TRACE_SAMPLE_RATIO"},
 		{name: "доля сэмплирования аномалий больше единицы", overrides: map[string]string{"ANOMALY_SAMPLE_RATE": "2"}, wantErr: "ANOMALY_SAMPLE_RATE"},
 		{name: "порог брейкера вне (0,1]", overrides: map[string]string{"BREAKER_ERROR_RATIO": "0"}, wantErr: "BREAKER_ERROR_RATIO"},
-		{name: "группа анализа совпадает с группой подсчёта", overrides: map[string]string{"KAFKA_FRAUD_GROUP": "televote-counting"}, wantErr: "KAFKA_FRAUD_GROUP"},
 		{name: "нулевой пул Postgres", overrides: map[string]string{"POSTGRES_MAX_CONNS": "0"}, wantErr: "POSTGRES_MAX_CONNS"},
 		{name: "нулевой интервал рефрешера конфига", overrides: map[string]string{"POLL_CONFIG_REFRESH": "0s"}, wantErr: "POLL_CONFIG_REFRESH"},
 		{name: "нулевой интервал снапшотов", overrides: map[string]string{"SNAPSHOT_INTERVAL": "0s"}, wantErr: "SNAPSHOT_INTERVAL"},
@@ -353,16 +351,6 @@ func TestLoad_ParsesTrustedProxiesAsPrefixes(t *testing.T) {
 
 func TestKafkaConfig_Validation(t *testing.T) {
 	t.Parallel()
-
-	t.Run("группы подсчёта и анализа обязаны различаться", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := config.LoadFrom(envWith(map[string]string{
-			"KAFKA_CONSUMER_GROUP": "same",
-			"KAFKA_FRAUD_GROUP":    "same",
-		}))
-		require.Error(t, err)
-	})
 
 	t.Run("Kafka без брокеров не даёт стартовать", func(t *testing.T) {
 		t.Parallel()

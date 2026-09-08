@@ -43,17 +43,15 @@ type app struct {
 	role   Role
 	router http.Handler
 
-	redis      rueidis.Client
-	pgWrite    *pgxpoolWrapper
-	pgRead     *pgxpoolWrapper
-	kafka      *kgo.Client
-	fraudKafka *kgo.Client
-	producer   *producer.Producer
+	redis    rueidis.Client
+	pgWrite  *pgxpoolWrapper
+	pgRead   *pgxpoolWrapper
+	kafka    *kgo.Client
+	producer *producer.Producer
 
 	metrics     *metrics.Metrics
 	cache       *pollcfg.Cache
 	counting    *consumer.Counting
-	fraud       *consumer.Fraud
 	snapshotter *snapshot.Snapshotter
 	advisor     *capacity.Advisor
 }
@@ -175,22 +173,6 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("снапшотер: %w", err)
 	}
 
-	fraudClient, err := kgo.NewClient(
-		kgo.SeedBrokers(a.cfg.KafkaBrokers...),
-		kgo.ConsumeTopics(a.cfg.KafkaTopic),
-		kgo.ConsumerGroup(a.cfg.KafkaFraudGroup),
-		kgo.DisableAutoCommit(),
-	)
-	if err != nil {
-		return fmt.Errorf("kafka consumer (анализ): %w", err)
-	}
-	a.fraudKafka = fraudClient
-
-	a.fraud, err = consumer.NewFraud(fraudClient, a.redis, a.log, int64(a.cfg.DedupTTL.Seconds()))
-	if err != nil {
-		return fmt.Errorf("консьюмер анализа: %w", err)
-	}
-
 	a.advisor, err = capacity.New(pollsRead, lag, capacity.Config{
 		DrainWindow: a.cfg.DrainWindow,
 		PrewarmLead: a.cfg.PollMinLeadTime,
@@ -285,13 +267,6 @@ func (a *app) runBackground(ctx context.Context) {
 			}
 		}()
 	}
-	if a.fraud != nil {
-		go func() {
-			if err := a.fraud.Run(ctx); err != nil {
-				a.log.ErrorContext(ctx, "консьюмер анализа остановлен", slog.Any("error", err))
-			}
-		}()
-	}
 	if a.snapshotter != nil {
 		go a.snapshotter.Run(ctx)
 	}
@@ -322,10 +297,8 @@ func (a *app) Close() {
 			errs = append(errs, fmt.Errorf("дренаж продюсера: %w", err))
 		}
 	}
-	for _, c := range []*kgo.Client{a.kafka, a.fraudKafka} {
-		if c != nil {
-			c.Close()
-		}
+	if a.kafka != nil {
+		a.kafka.Close()
 	}
 	if a.redis != nil {
 		a.redis.Close()

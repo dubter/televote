@@ -80,7 +80,6 @@ type Config struct {
 	KafkaBrokers        []string      `env:"KAFKA_BROKERS" envSeparator:","`
 	KafkaTopic          string        `env:"KAFKA_TOPIC" envDefault:"votes"`
 	KafkaConsumerGroup  string        `env:"KAFKA_CONSUMER_GROUP" envDefault:"televote-counting"`
-	KafkaFraudGroup     string        `env:"KAFKA_FRAUD_GROUP" envDefault:"televote-fraud"`
 	KafkaLinger         time.Duration `env:"KAFKA_LINGER" envDefault:"5ms"`
 	KafkaProduceTimeout time.Duration `env:"KAFKA_PRODUCE_TIMEOUT" envDefault:"2s"`
 
@@ -279,12 +278,8 @@ func (c *Config) validate() error {
 	if c.KafkaTopic == "" {
 		fail("KAFKA_TOPIC", "не задан")
 	}
-	if c.KafkaConsumerGroup == "" || c.KafkaFraudGroup == "" {
-		fail("KAFKA_CONSUMER_GROUP", "группы подсчёта и анализа обязаны быть заданы")
-	}
-	if c.KafkaConsumerGroup == c.KafkaFraudGroup {
-		fail("KAFKA_FRAUD_GROUP",
-			"совпадает с группой подсчёта: анализ обязан читать топик независимо, иначе он крадёт сообщения у подсчёта")
+	if c.KafkaConsumerGroup == "" {
+		fail("KAFKA_CONSUMER_GROUP", "не задана")
 	}
 
 	if c.DedupTTL <= 0 {

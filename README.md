@@ -134,8 +134,8 @@ curl -s localhost:8080/api/v1/admin/polls/final/results -H "Authorization: Beare
                                   ┌────▼─────┐
                                   │  Kafka   │  партиции по voterID
                                   └──┬────┬──┘
-                    counting-consumer │    │ fraud-consumer
-                            EVALSHA ──▼    └──► агрегаты по подсетям
+                                       │ counting-consumer
+                               EVALSHA ──▼
                              Redis Cluster
                                   │ снапшот → финализация
                              Postgres → админка
@@ -154,7 +154,7 @@ curl -s localhost:8080/api/v1/admin/polls/final/results -H "Authorization: Beare
 
 ```
 cmd/televote-api        приём голосов и админка
-cmd/televote-consumer   подсчёт, анализ накрутки, снапшоты
+cmd/televote-consumer   подсчёт голосов и снапшоты
 cmd/televote            обе роли в одном процессе — для локального стенда
 cmd/migrate             миграции Postgres со встроенными SQL
 
@@ -163,7 +163,7 @@ internal/
   domain            опрос, правила выбора, FSM статусов, агрегат, расчёт ёмкости
   vote              Lua-скрипт, вывод voterID, шардирование ключей
   producer          отправка голоса в Kafka
-  consumer          подсчёт и анализ накрутки, две независимые группы
+  consumer          подсчёт голосов
   snapshot          Redis → Postgres, расписание, финализация
   pollcfg           кэш конфигов опросов в памяти процесса
   capacity          советчик ёмкости для KEDA
