@@ -25,6 +25,7 @@ type Config struct {
 	Topic          string
 	Linger         time.Duration
 	ProduceTimeout time.Duration
+	Hooks          []kgo.Hook
 }
 
 var (
@@ -58,6 +59,7 @@ func New(cfg Config) (*Producer, error) {
 	}
 
 	client, err := kgo.NewClient(
+		kgo.WithHooks(cfg.Hooks...),
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.DefaultProduceTopic(cfg.Topic),
 		kgo.RequiredAcks(kgo.AllISRAcks()),

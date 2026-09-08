@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: televote
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/televote
+      foldersFromFilesStructure: false

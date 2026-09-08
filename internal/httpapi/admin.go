@@ -21,7 +21,8 @@ import (
 type PollStore interface {
 	Create(ctx context.Context, p *domain.Poll) error
 	GetBySlug(ctx context.Context, slug string) (*domain.Poll, error)
-	ListActive(ctx context.Context) ([]*domain.Poll, error)
+	List(ctx context.Context) ([]*domain.Poll, error)
+	CloseNow(ctx context.Context, id uuid.UUID, version uint32) error
 	Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error
 	HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error)
 }
@@ -250,7 +251,7 @@ func (r createPollRequest) toSpec() (domain.PollSpec, error) {
 }
 
 func (h *AdminHandler) listPolls(w http.ResponseWriter, r *http.Request) {
-	polls, err := h.polls.ListActive(r.Context())
+	polls, err := h.polls.List(r.Context())
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -267,8 +268,27 @@ func (h *AdminHandler) openPoll(w http.ResponseWriter, r *http.Request) {
 	h.transition(w, r, domain.StatusOpen, "open_poll")
 }
 
+// Закрытие сдвигает границу окна на сейчас. Статус переведёт снапшотер после
+// дренажа — вместе с публикацией итогового результата.
 func (h *AdminHandler) closePoll(w http.ResponseWriter, r *http.Request) {
-	h.transition(w, r, domain.StatusClosed, "close_poll")
+	slug := chi.URLParam(r, "slug")
+
+	poll, err := h.polls.GetBySlug(r.Context(), slug)
+	if err != nil {
+		WriteError(w, r, errNotFound)
+		return
+	}
+	if poll.Status != domain.StatusOpen {
+		WriteError(w, r, fmt.Errorf("%w: %s → %s", domain.ErrBadTransition, poll.Status, domain.StatusClosed))
+		return
+	}
+	if err := h.polls.CloseNow(r.Context(), poll.ID, poll.Version); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	h.audit(r, "close_poll", slug, map[string]any{"from": string(poll.Status)})
+
+	writeJSON(w, http.StatusOK, toPollResponse(poll))
 }
 
 func (h *AdminHandler) transition(w http.ResponseWriter, r *http.Request, to domain.Status, action string) {
@@ -291,6 +311,25 @@ func (h *AdminHandler) transition(w http.ResponseWriter, r *http.Request, to dom
 
 	poll.Status = to
 	writeJSON(w, http.StatusOK, toPollResponse(poll))
+}
+
+// Публикуемый результат существует только после финализации. Пока её не было,
+// отдаём текущий снимок и честно помечаем его как непромежуточный.
+func (h *AdminHandler) aggregateFor(ctx context.Context, poll *domain.Poll) (
+	agg domain.Aggregate, excludedNets []string, final bool, err error,
+) {
+	if poll.Status == domain.StatusClosed || poll.Status == domain.StatusArchived {
+		published, nets, pubErr := h.results.GetAdjusted(ctx, poll.ID)
+		if pubErr == nil {
+			return published, nets, true, nil
+		}
+		if !errors.Is(pubErr, domain.ErrNotFound) {
+			return domain.Aggregate{}, nil, false, pubErr
+		}
+	}
+
+	agg, err = h.results.Get(ctx, poll.ID)
+	return agg, nil, false, err
 }
 
 type optionResult struct {
@@ -316,17 +355,7 @@ func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	final := poll.Status == domain.StatusClosed || poll.Status == domain.StatusArchived
-
-	var (
-		agg      domain.Aggregate
-		excluded []string
-	)
-	if final {
-		agg, excluded, err = h.results.GetAdjusted(r.Context(), poll.ID)
-	} else {
-		agg, err = h.results.Get(r.Context(), poll.ID)
-	}
+	agg, excluded, final, err := h.aggregateFor(r.Context(), poll)
 	if err != nil {
 		WriteError(w, r, err)
 		return

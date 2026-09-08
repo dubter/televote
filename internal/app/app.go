@@ -18,6 +18,7 @@ import (
 	"github.com/dubter/televote/internal/consumer"
 	"github.com/dubter/televote/internal/httpapi"
 	"github.com/dubter/televote/internal/metrics"
+	"github.com/dubter/televote/internal/observability"
 	"github.com/dubter/televote/internal/pollcfg"
 	"github.com/dubter/televote/internal/producer"
 	"github.com/dubter/televote/internal/snapshot"
@@ -111,6 +112,7 @@ func (a *app) connectStores(ctx context.Context) error {
 			Topic:          a.cfg.KafkaTopic,
 			Linger:         a.cfg.KafkaLinger,
 			ProduceTimeout: a.cfg.KafkaProduceTimeout,
+			Hooks:          observability.KafkaHooks(a.cfg.KafkaConsumerGroup),
 		})
 		if err != nil {
 			return fmt.Errorf("kafka producer: %w", err)
@@ -119,6 +121,7 @@ func (a *app) connectStores(ctx context.Context) error {
 
 	if a.role.needsRedis() {
 		opts := []kgo.Opt{
+			kgo.WithHooks(observability.KafkaHooks(a.cfg.KafkaConsumerGroup)...),
 			kgo.SeedBrokers(a.cfg.KafkaBrokers...),
 			kgo.ConsumerGroup(a.cfg.KafkaConsumerGroup),
 			kgo.DisableAutoCommit(),

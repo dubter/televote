@@ -30,8 +30,11 @@ fi
 opens=$(date -u -v-1M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')
 closes=$(date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+1 hour' '+%Y-%m-%dT%H:%M:%SZ')
 
-curl -fsS -X POST "${API}/polls" -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer ${token}" -d @- >/dev/null <<JSON || true
+# `|| true` здесь скрыл бы настоящую ошибку, поэтому разбираем код ответа:
+# 409 означает «опрос уже создан прошлым запуском», всё остальное — отказ.
+created=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${API}/polls" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer ${token}" -d @- <<JSON
 {
   "slug": "${SLUG}",
   "question": "Кто победит в финале?",
@@ -43,8 +46,18 @@ curl -fsS -X POST "${API}/polls" -H 'Content-Type: application/json' \
   "expected_conversion": 0.3
 }
 JSON
+)
+case "$created" in
+  200|201|409) ;;
+  *) echo "не удалось создать опрос ${SLUG}: HTTP ${created}" >&2; exit 1 ;;
+esac
 
-curl -fsS -X POST "${API}/polls/${SLUG}/open" -H "Authorization: Bearer ${token}" >/dev/null || true
+opened=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${API}/polls/${SLUG}/open" \
+  -H "Authorization: Bearer ${token}")
+case "$opened" in
+  200|204|409) ;;
+  *) echo "не удалось открыть опрос ${SLUG}: HTTP ${opened}" >&2; exit 1 ;;
+esac
 
 cat <<INFO
 

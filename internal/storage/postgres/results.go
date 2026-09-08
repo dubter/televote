@@ -146,10 +146,8 @@ func (r *ResultRepo) SaveAdjusted(
 func (r *ResultRepo) GetAdjusted(
 	ctx context.Context, pollID uuid.UUID,
 ) (domain.Aggregate, []string, error) {
-	var (
-		agg  domain.Aggregate
-		nets []string
-	)
+	agg := domain.NewAggregate()
+	var nets []string
 
 	err := pgx.BeginTxFunc(ctx, r.db,
 		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},

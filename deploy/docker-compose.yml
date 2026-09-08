@@ -33,6 +33,8 @@ x-app-env: &app-env
   # На стенде ёмкость уже поднята, ждать час до открытия опроса незачем.
   POLL_MIN_LEAD_TIME: 0s
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4317
+  # На стенде трейсим всё: голосов десятки, а не 30 млн. Прод-дефолт 0.0001.
+  OTEL_TRACE_SAMPLE_RATIO: "1"
   ADMIN_BOOTSTRAP_LOGIN: admin
   ADMIN_BOOTSTRAP_PASSWORD: dev-only-change-me
 
@@ -186,6 +188,10 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
+      - ./grafana/dashboards.yaml:/otel-lgtm/grafana-v11.0.0/conf/provisioning/dashboards/televote.yaml:ro
+      - ./grafana/televote.json:/etc/grafana/televote/televote.json:ro
 
   # ─── Нагрузочный профиль ────────────────────────────────────────────────
   k6:
@@ -194,5 +200,6 @@ services:
     volumes: ["../load/k6:/scripts:ro"]
     environment:
       BASE_URL: http://lb:8080
+      INSTANCES: app-1:8080,app-2:8080
     depends_on:
       lb: { condition: service_started }

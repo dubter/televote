@@ -11,10 +11,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/dubter/televote/internal/config"
+	"github.com/dubter/televote/internal/observability"
 	"github.com/dubter/televote/pkg/health"
 )
 
@@ -26,8 +28,20 @@ func Run(ctx context.Context, r Role) error {
 		return fmt.Errorf("конфигурация: %w", err)
 	}
 
-	logger := newLogger(cfg)
+	telemetry, err := observability.Setup(ctx, observability.Config{
+		Endpoint:    cfg.OTLPEndpoint,
+		ServiceName: cfg.OTelServiceName,
+		Version:     Version,
+		Env:         cfg.Env,
+		SampleRatio: cfg.TraceSampleRatio,
+	}, stdoutHandler(cfg))
+	if err != nil {
+		return fmt.Errorf("телеметрия: %w", err)
+	}
+
+	logger := newLogger(cfg, telemetry.Logs)
 	slog.SetDefault(logger)
+	defer flushTelemetry(ctx, telemetry, logger)
 
 	logger.Info("старт",
 		slog.String("http_addr", cfg.HTTPAddr),
@@ -149,8 +163,21 @@ func debugMux() *http.ServeMux {
 	return mux
 }
 
-func newLogger(cfg *config.Config) *slog.Logger {
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})
+func stdoutHandler(cfg *config.Config) slog.Handler {
+	return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})
+}
+
+func flushTelemetry(ctx context.Context, t *observability.Telemetry, logger *slog.Logger) {
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryFlushTimeout)
+	defer cancel()
+	if err := t.Shutdown(flushCtx); err != nil {
+		logger.Warn("телеметрия выгружена не полностью", slog.Any("error", err))
+	}
+}
+
+const telemetryFlushTimeout = 5 * time.Second
+
+func newLogger(cfg *config.Config, handler slog.Handler) *slog.Logger {
 	return slog.New(handler).With(
 		slog.String("service", cfg.OTelServiceName),
 		slog.String("env", cfg.Env),

@@ -17,6 +17,7 @@ const BASE = __ENV.BASE_URL || "http://lb:8080";
 const SLUG = __ENV.SLUG || "loadtest";
 const ADMIN_LOGIN = __ENV.ADMIN_LOGIN || "admin";
 const ADMIN_PASSWORD = __ENV.ADMIN_PASSWORD || "dev-only-change-me";
+const INSTANCES = (__ENV.INSTANCES || "app-1:8080,app-2:8080").split(",");
 
 const accepted = new Counter("votes_accepted");
 const rejected = new Counter("votes_rejected");
@@ -42,6 +43,8 @@ export const options = {
       ],
     },
   },
+  // По умолчанию k6 не считает p(50) и p(99), а итог обещает именно их.
+  summaryTrendStats: ["min", "med", "p(50)", "p(90)", "p(95)", "p(99)", "max", "avg"],
   thresholds: {
     // Порог на приём, а не на подсчёт: подсчёт асинхронный по построению.
     "http_req_duration{scenario:broadcast}": ["p(95)<200"],
@@ -78,10 +81,21 @@ export function setup() {
 
   http.post(`${BASE}/api/v1/admin/polls/${SLUG}/open`, null, auth);
 
-  // Конфиг разъезжается по инстансам фоновым рефрешером.
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    if (http.get(`${BASE}/api/v1/polls/${SLUG}`).status === 200) break;
+  // Конфиг разъезжается по инстансам фоновым рефрешером, поэтому ждём КАЖДЫЙ
+  // инстанс поимённо, а не балансировщик: тот отдаёт 200 уже с одной реплики,
+  // и первые голоса, попавшие на вторую, получают 404. Тест объявил бы это
+  // потерей голосов, которой нет.
+  for (const host of INSTANCES) {
+    const deadline = Date.now() + 30_000;
+    let ready = false;
+    while (Date.now() < deadline) {
+      if (http.get(`http://${host}/api/v1/polls/${SLUG}`).status === 200) {
+        ready = true;
+        break;
+      }
+      sleep(0.25);
+    }
+    if (!ready) throw new Error(`инстанс ${host} не увидел опрос ${SLUG}`);
   }
   return { token };
 }
@@ -176,8 +190,5 @@ export function handleSummary(data) {
     "",
   ];
 
-  return {
-    stdout: lines.join("\n"),
-    "load/k6/summary.json": JSON.stringify(data, null, 2),
-  };
+  return { stdout: lines.join("\n") };
 }

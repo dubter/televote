@@ -9,6 +9,8 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dubter/televote/internal/domain"
 )
 
 var (
@@ -16,7 +18,7 @@ var (
 
 	ErrVersionConflict = errors.New("version_conflict")
 
-	ErrNotFound = errors.New("not_found")
+	ErrNotFound = domain.ErrNotFound
 )
 
 const (

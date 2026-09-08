@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dubter/televote/internal/pollcfg"
 	"github.com/dubter/televote/internal/producer"
@@ -47,6 +49,8 @@ type Counting struct {
 	retryBudget time.Duration
 
 	lookupBudget time.Duration
+
+	tracer trace.Tracer
 }
 
 func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs Observer, log *slog.Logger) (*Counting, error) {
@@ -69,6 +73,7 @@ func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs O
 		log:          log,
 		retryBudget:  30 * time.Second,
 		lookupBudget: 10 * time.Second,
+		tracer:       otel.Tracer("televote/consumer"),
 	}, nil
 }
 
@@ -99,6 +104,14 @@ func (c *Counting) Run(ctx context.Context) error {
 }
 
 func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
+	// Родитель приехал в заголовках записи, а не через наследование контекста:
+	// приём и подсчёт разнесены по процессам и по времени.
+	if parent := remoteSpan(rec); parent.IsValid() {
+		ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
+	}
+	ctx, span := c.tracer.Start(ctx, "vote.apply")
+	defer span.End()
+
 	var msg producer.VoteMessage
 	if err := json.Unmarshal(rec.Value, &msg); err != nil {
 		c.reject(ctx, reasonMalformed, err)
@@ -135,6 +148,13 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	if c.obs != nil {
 		c.obs.VoteCounted(ctx, res)
 	}
+}
+
+func remoteSpan(rec *kgo.Record) trace.SpanContext {
+	if rec.Context == nil {
+		return trace.SpanContext{}
+	}
+	return trace.SpanContextFromContext(rec.Context)
 }
 
 func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.HotConfig, bool) {

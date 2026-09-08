@@ -38,6 +38,7 @@ const (
 	predPollBySlug = `p.slug = $1`
 
 	predPollActive = `p.status IN ('scheduled', 'open')`
+	predPollAny    = `TRUE`
 )
 
 func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
@@ -110,6 +111,37 @@ func (r *PollRepo) GetBySlug(ctx context.Context, slug string) (*domain.Poll, er
 
 func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return r.many(ctx, predPollActive)
+}
+
+func (r *PollRepo) List(ctx context.Context) ([]*domain.Poll, error) {
+	return r.many(ctx, predPollAny)
+}
+
+// Ручное закрытие двигает границу окна, а не статус: статус снимет снапшотер,
+// когда дренаж дойдёт до нуля. Прямой перевод в closed выбросил бы опрос из
+// выборки снапшотера, и голоса последних секунд не попали бы в результат.
+func (r *PollRepo) CloseNow(ctx context.Context, id uuid.UUID, version uint32) error {
+	const q = `
+		WITH updated AS (
+			UPDATE polls SET closes_at = now(), version = version + 1
+			WHERE id = $1 AND version = $2
+			RETURNING 1
+		)
+		SELECT EXISTS (SELECT 1 FROM updated), EXISTS (SELECT 1 FROM polls WHERE id = $1)`
+
+	var applied, exists bool
+	if err := r.db.QueryRow(ctx, q, id, int64(version)).Scan(&applied, &exists); err != nil {
+		return fmt.Errorf("postgres: закрытие окна опроса %s: %w", id, err)
+	}
+
+	switch {
+	case applied:
+		return nil
+	case !exists:
+		return fmt.Errorf("postgres: опрос %s: %w", id, ErrNotFound)
+	default:
+		return fmt.Errorf("postgres: опрос %s, версия %d: %w", id, version, ErrVersionConflict)
+	}
 }
 
 func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error {

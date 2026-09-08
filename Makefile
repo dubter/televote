@@ -6,6 +6,8 @@ SHELL := /bin/bash
 # подготовки. Переопределить порт — обычная переменная окружения:
 #   APP_PORT=9090 make demo
 COMPOSE := docker compose -f deploy/docker-compose.yml
+# Версия совпадает с CI: линтер, который проходит локально, обязан пройти и там.
+LINTER := golangci/golangci-lint:v2.13.2
 MODULE := $(shell head -1 go.mod 2>/dev/null | cut -d' ' -f2)
 
 .PHONY: help
@@ -51,8 +53,9 @@ cover: ## покрытие
 	@go tool cover -func=coverage.out | tail -1
 
 .PHONY: lint
-lint: ## golangci-lint v2
-	@golangci-lint run
+lint: ## golangci-lint в докере, версия та же, что в CI
+	@docker run --rm -v "$(PWD)":/app -v "$(HOME)/go/pkg/mod":/go/pkg/mod \
+	  -w /app $(LINTER) golangci-lint run --timeout 10m
 
 .PHONY: vuln
 vuln: ## проверка уязвимостей в зависимостях
@@ -75,6 +78,7 @@ chaos: ## сценарии отказов; каждый заканчиваетс
 load: ## k6: стоимость одного голоса + сверка суммы счётчиков
 	@$(COMPOSE) --profile load run --rm \
 	  -e BASE_URL=http://lb:8080 -e PEAK_RPS=$${PEAK_RPS:-500} \
+	  -e SLUG=load-$$(date +%s) \
 	  k6 run /scripts/vote.js
 
 # ─── разработка ───────────────────────────────────────────────────────────

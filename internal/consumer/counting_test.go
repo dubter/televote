@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel"
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/pollcfg"
@@ -138,6 +139,7 @@ func newCounting(t *testing.T, applier Applier, cfg *pollcfg.HotConfig, obs Obse
 		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		retryBudget:  2 * time.Second,
 		lookupBudget: 300 * time.Millisecond,
+		tracer:       otel.Tracer("televote/consumer"),
 	}
 	return c
 }

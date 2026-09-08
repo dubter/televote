@@ -30,7 +30,7 @@ make test               # unit с детектором гонок
 make test-integration   # на настоящих Postgres и Redis через testcontainers
 make load               # k6: стоимость голоса и сверка агрегата
 make chaos              # отказ Redis, ребаланс консьюмеров, падение Postgres
-make lint               # golangci-lint
+make lint               # golangci-lint в докере, версия та же, что в CI
 ```
 
 `make smoke` доказывает главное требование: один голосующий отправляет голос на
@@ -102,7 +102,7 @@ curl -s localhost:8080/api/v1/admin/polls/final/results -H "Authorization: Beare
 | `GET` | `/admin/polls` | viewer | список активных опросов |
 | `POST` | `/admin/polls` | editor | создать опрос |
 | `POST` | `/admin/polls/{slug}/open` | editor | открыть |
-| `POST` | `/admin/polls/{slug}/close` | editor | закрыть |
+| `POST` | `/admin/polls/{slug}/close` | editor | закрыть приём: сдвигает `closes_at` на сейчас |
 | `GET` | `/admin/polls/{slug}/results` | viewer | обезличенные результаты |
 
 Результаты возвращают `final: false`, пока идёт подсчёт: цифры ещё растут, и
@@ -171,6 +171,7 @@ internal/
   httpapi           приём голоса, админка, страницы
   auth              argon2id, JWT, роли
   metrics           бизнес-метрики Prometheus
+  observability     OTLP-экспорт трейсов и логов, trace_id в slog
   storage/postgres  репозитории control plane
   config            конфигурация с проверкой инвариантов при старте
 
@@ -225,7 +226,9 @@ N раз, поэтому он держится в одном экземпляр�
 
 ## Наблюдаемость
 
-`GET /metrics`, плюс всё уходит по OTLP в Grafana (`otel-lgtm` одним контейнером).
+`GET /metrics`, плюс трейсы и логи уходят по OTLP в Grafana (`otel-lgtm` одним
+контейнером). Дашборд **Televote** заведён автоматически — восемь панелей,
+по одному вопросу на каждую: <http://localhost:3000/d/televote>.
 
 | Метрика | Тип | Лейблы | Смысл |
 |---|---|---|---|
@@ -237,8 +240,11 @@ N раз, поэтому он держится в одном экземпляр�
 | `televote_consumer_lag` | gauge | — | ноль означает конец дренажа |
 | `televote_ballots_total` | gauge | `poll` | бюллетеней в последнем снимке |
 
-Трейсы сэмплируются 0.01 %: при 2M RPS запись на каждый запрос — терабайты и
-мёртвый диск. Полноту картины даёт не лог, а метрики.
+Трейс сшивает приём и подсчёт: контекст едет в заголовках записи Kafka, поэтому
+HTTP-запрос и применение голоса в Redis минутами позже видны одним трейсом.
+В проде сэмплирование 0.01 %: при 2M RPS запись на каждый запрос — терабайты и
+мёртвый диск. Полноту картины даёт не лог, а метрики. На стенде сэмплируется всё
+(`OTEL_TRACE_SAMPLE_RATIO=1`): голосов там десятки, а не 30 млн.
 
 ## Что можно улучшить
 

@@ -10,4 +10,6 @@ var (
 	ErrOptionsImmutable = errors.New("options_immutable")
 
 	ErrBadTransition = errors.New("bad_transition")
+
+	ErrNotFound = errors.New("not_found")
 )

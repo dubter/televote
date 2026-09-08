@@ -62,7 +62,20 @@ func (f *fakePolls) GetBySlug(_ context.Context, slug string) (*domain.Poll, err
 	return p, nil
 }
 
-func (f *fakePolls) ListActive(context.Context) ([]*domain.Poll, error) {
+func (f *fakePolls) CloseNow(_ context.Context, id uuid.UUID, _ uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for _, p := range f.bySlug {
+		if p.ID == id {
+			p.ClosesAt = time.Now().UTC()
+			return nil
+		}
+	}
+	return postgres.ErrNotFound
+}
+
+func (f *fakePolls) List(context.Context) ([]*domain.Poll, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -91,9 +104,10 @@ func (f *fakePolls) HasCountedVotes(context.Context, uuid.UUID) (bool, error) {
 }
 
 type fakeResults struct {
-	agg      domain.Aggregate
-	adjusted domain.Aggregate
-	excluded []string
+	agg         domain.Aggregate
+	adjusted    domain.Aggregate
+	excluded    []string
+	adjustedErr error
 }
 
 func (f *fakeResults) Get(context.Context, uuid.UUID) (domain.Aggregate, error) {
@@ -101,6 +115,9 @@ func (f *fakeResults) Get(context.Context, uuid.UUID) (domain.Aggregate, error) 
 }
 
 func (f *fakeResults) GetAdjusted(context.Context, uuid.UUID) (domain.Aggregate, []string, error) {
+	if f.adjustedErr != nil {
+		return domain.Aggregate{}, nil, f.adjustedErr
+	}
 	return f.adjusted, f.excluded, nil
 }
 
@@ -310,8 +327,12 @@ func TestFR6_TransitionsFollowFSM(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 
+	// Закрытие сдвигает границу окна, а не статус: статус переведёт снапшотер,
+	// когда дренаж дойдёт до нуля. Иначе голоса последних секунд не попали бы
+	// в итоговый результат — опрос выпал бы из выборки снапшотера.
 	require.Equal(t, http.StatusOK, f.do(t, http.MethodPost, "/polls/final/close", "", f.token).Code)
-	assert.Equal(t, domain.StatusClosed, poll.Status)
+	assert.Equal(t, domain.StatusOpen, poll.Status)
+	assert.False(t, poll.Window().IsOpenAt(time.Now().UTC().Add(time.Second)))
 
 	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
 
@@ -439,4 +460,33 @@ func TestResults_UnknownPollIsNotFound(t *testing.T) {
 
 	f := newAdminFixture(t, auth.RoleViewer, newFakePolls(), &fakeResults{})
 	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/polls/нет/results", "", f.token).Code)
+}
+
+// Опрос закрыт, но снапшотер ещё не финализировал его: публикуемого результата
+// нет. Раньше этот путь отдавал 500 и делал результаты закрытого опроса
+// недоступными — ровно то, что требует ТЗ от админки.
+func TestFR5_ClosedPollWithoutFinalSnapshotFallsBackToRunningTotals(t *testing.T) {
+	t.Parallel()
+
+	poll := &domain.Poll{
+		ID: uuid.New(), Slug: "final", Status: domain.StatusClosed, Version: 1,
+		Options: []domain.Option{{Idx: 0, Text: "а"}},
+	}
+	results := &fakeResults{
+		agg:         domain.NewAggregateFrom(map[uint8]int64{0: 42}, 42),
+		adjustedErr: domain.ErrNotFound,
+	}
+	f := newAdminFixture(t, auth.RoleViewer, newFakePolls(poll), results)
+
+	w := f.do(t, http.MethodGet, "/polls/final/results", "", f.token)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got struct {
+		Ballots int64 `json:"ballots"`
+		Final   bool  `json:"final"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+
+	assert.EqualValues(t, 42, got.Ballots)
+	assert.False(t, got.Final)
 }
