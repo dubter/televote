@@ -72,12 +72,12 @@ var roleRank = map[Role]int{RoleViewer: 1, RoleEditor: 2, RoleAdmin: 3}
 func (r Role) Valid() bool { return roleRank[r] > 0 }
 
 // AtLeast сообщает, покрывает ли роль требуемый уровень.
-func (r Role) AtLeast(min Role) bool {
+func (r Role) AtLeast(required Role) bool {
 	have, ok := roleRank[r]
 	if !ok {
 		return false
 	}
-	need, ok := roleRank[min]
+	need, ok := roleRank[required]
 	if !ok {
 		return false
 	}
@@ -157,7 +157,7 @@ func (t *TokenService) Parse(raw string) (*Claims, error) {
 		return t.key, nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidToken, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 	if !claims.Role.Valid() {
 		return nil, fmt.Errorf("%w: неизвестная роль %q", ErrInvalidToken, claims.Role)

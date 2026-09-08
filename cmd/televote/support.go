@@ -16,8 +16,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/OWNER/televote/internal/observability"
 	"github.com/OWNER/televote/internal/storage/postgres"
+	"github.com/OWNER/televote/pkg/health"
 )
 
 // selfHealthcheck дёргает /readyz собственного процесса.
@@ -33,12 +33,23 @@ func selfHealthcheck() int {
 		addr = "127.0.0.1" + addr
 	}
 
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("http://" + addr + "/readyz")
+	// Адрес собственного слушателя, а не пользовательский ввод: G704 здесь
+	// ложное срабатывание, но запрос всё равно строится через NewRequest
+	// с контекстом, чтобы не висеть дольше таймаута healthcheck контейнера.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	//nolint:gosec // G704: адрес берётся из собственного HTTP_ADDR, не из запроса
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: адрес формируется из собственного HTTP_ADDR
+
+	if err != nil {
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // healthcheck читает только код ответа
 
 	if resp.StatusCode != http.StatusOK {
 		return 1
@@ -58,7 +69,7 @@ func openPool(ctx context.Context, dsn string, maxConns int32) (*pgxpoolWrapper,
 	return &pgxpoolWrapper{pool: pool}, nil
 }
 
-func (p *pgxpoolWrapper) checker() observability.Checker {
+func (p *pgxpoolWrapper) checker() health.Checker {
 	return func(ctx context.Context) error { return p.pool.Ping(ctx) }
 }
 
@@ -80,9 +91,8 @@ type kafkaLag struct {
 func (k kafkaLag) Lag(ctx context.Context) (int64, error) {
 	admin := kadm.NewClient(k.client)
 
-	group := k.client.OptValue(kgo.ConsumerGroup)
-	name, _ := group.(string)
-	if name == "" {
+	name, ok := k.client.OptValue(kgo.ConsumerGroup).(string)
+	if !ok || name == "" {
 		return 0, fmt.Errorf("kafka lag: не задана группа консьюмеров")
 	}
 
@@ -92,13 +102,13 @@ func (k kafkaLag) Lag(ctx context.Context) (int64, error) {
 	}
 
 	var total int64
-	for _, groupLag := range lags {
-		for topic, partitions := range groupLag.Lag {
+	for name := range lags {
+		for topic, partitions := range lags[name].Lag {
 			if topic != k.topic {
 				continue
 			}
-			for _, p := range partitions {
-				if p.Lag > 0 {
+			for id := range partitions {
+				if p := partitions[id]; p.Lag > 0 {
 					total += p.Lag
 				}
 			}
@@ -125,7 +135,7 @@ func (a *app) datacenterRanges() []netip.Prefix {
 	}
 
 	var out []netip.Prefix
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") { //nolint:gocritic // строки короткие
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

@@ -16,16 +16,19 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+// writeJSONError отдаёт ошибку. Результат Encode игнорируется намеренно:
+// заголовки уже отправлены, и обрыв соединения на этом месте — событие
+// клиента, а не сервера.
 func writeJSONError(w http.ResponseWriter, status int, code string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorResponse{Error: code})
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: code}) //nolint:errcheck,errchkjson // см. комментарий выше
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_ = json.NewEncoder(w).Encode(body) //nolint:errcheck,errchkjson // заголовки отправлены, обрыв — событие клиента
 }
 
 // WriteError — ЕДИНСТВЕННАЯ точка перевода доменных ошибок в HTTP-коды.
@@ -45,7 +48,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	writeJSONError(w, status, code)
 }
 
-func classify(err error) (int, string) {
+func classify(err error) (status int, code string) {
 	switch {
 	case err == nil:
 		return http.StatusOK, ""
@@ -54,6 +57,7 @@ func classify(err error) (int, string) {
 	case errors.Is(err, domain.ErrInvalidChoices),
 		errors.Is(err, vote.ErrInvalidArgs),
 		errors.Is(err, vote.ErrBadClientID),
+		errors.Is(err, domain.ErrInvalidPoll),
 		errors.Is(err, errBadRequest):
 		return http.StatusBadRequest, "invalid_choices"
 

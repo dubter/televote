@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/riandyrn/otelchi"
 	"github.com/rs/cors"
+
+	"github.com/OWNER/televote/pkg/httpx"
 )
 
 // RouterConfig — то, что роутеру нужно снаружи.
@@ -33,11 +35,15 @@ type RouterConfig struct {
 func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, cfg RouterConfig) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.RealIP)
+	// chi middleware.RealIP здесь НЕ используется намеренно: он переписывает
+	// RemoteAddr самым левым значением X-Forwarded-For независимо от того,
+	// ставит ли его наша инфраструктура (GHSA-3fxj-6jh8-hvhx). Запущенный
+	// перед нашим ClientIP, он бы уничтожил проверку доверенных прокси
+	// раньше, чем она успела бы отработать.
 	r.Use(otelchi.Middleware(cfg.ServiceName, otelchi.WithChiRoutes(r)))
-	r.Use(Recovery(nil))
-	r.Use(SecurityHeaders)
-	r.Use(ClientIP(cfg.TrustedProxies))
+	r.Use(httpx.Recovery(nil))
+	r.Use(httpx.SecurityHeaders)
+	r.Use(httpx.ClientIP(cfg.TrustedProxies))
 
 	if len(cfg.AllowedOrigins) > 0 {
 		r.Use(cors.New(cors.Options{
@@ -52,8 +58,8 @@ func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, 
 	// аутентификация, а голосующий анонимен.
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Group(func(vote chi.Router) {
-			vote.Use(BlockDatacenterASN(cfg.DatacenterRanges))
-			vote.Use(RateLimit(cfg.VoteRateLimit, cfg.RateWindow))
+			vote.Use(httpx.BlockDatacenterASN(cfg.DatacenterRanges))
+			vote.Use(httpx.RateLimit(cfg.VoteRateLimit, cfg.RateWindow))
 			vote.Mount("/", public.Routes())
 		})
 

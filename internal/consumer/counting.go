@@ -99,16 +99,13 @@ func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs O
 // падении между коммитом и записью. Обратный порядок даёт дубли доставки, но
 // они безвредны — применение идемпотентно по voterID.
 func (c *Counting) Run(ctx context.Context) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil
-		}
-
+	for ctx.Err() == nil {
 		fetches := c.client.PollFetches(ctx)
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
+				// Отмена контекста — штатная остановка, а не отказ.
 				if errors.Is(e.Err, context.Canceled) {
-					return nil
+					return nil //nolint:nilerr
 				}
 				c.log.ErrorContext(ctx, "consumer: чтение из Kafka",
 					slog.String("topic", e.Topic), slog.String("error", e.Err.Error()))
@@ -126,6 +123,7 @@ func (c *Counting) Run(ctx context.Context) error {
 				slog.String("error", err.Error()))
 		}
 	}
+	return nil
 }
 
 func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {

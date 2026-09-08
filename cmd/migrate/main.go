@@ -41,7 +41,7 @@ func run(command string, timeout time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("подключение: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }() //nolint:errcheck // ошибка закрытия пула ничего не меняет
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

@@ -15,12 +15,12 @@ import (
 	"github.com/OWNER/televote/internal/config"
 	"github.com/OWNER/televote/internal/consumer"
 	"github.com/OWNER/televote/internal/httpapi"
-	"github.com/OWNER/televote/internal/observability"
 	"github.com/OWNER/televote/internal/pollcfg"
 	"github.com/OWNER/televote/internal/producer"
 	"github.com/OWNER/televote/internal/snapshot"
 	"github.com/OWNER/televote/internal/storage/postgres"
 	"github.com/OWNER/televote/internal/vote"
+	"github.com/OWNER/televote/pkg/health"
 )
 
 // role — что делает процесс. В проде это разные деплойменты: приём
@@ -235,6 +235,8 @@ func (a *app) buildAdmin() (*httpapi.AdminHandler, error) {
 // Без этого свежий стенд некому открыть: админка требует токена, а токен
 // выдаётся только существующему пользователю. В production конфиг уже
 // потребовал непустой пароль, поэтому дефолт сюда не доедет.
+//
+//nolint:contextcheck // выполняется на старте, до появления контекста запроса
 func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
 	if a.cfg.AdminBootstrapLogin == "" || a.cfg.AdminBootstrapPassword == "" {
 		return nil
@@ -280,8 +282,8 @@ func (a *app) runBackground(ctx context.Context) {
 //
 // Проверки настоящие: под, отвечающий 200 из воздуха, встанет в балансировку
 // и начнёт отдавать ошибки на голосах.
-func (a *app) readiness() []observability.Checker {
-	checks := []observability.Checker{a.pgRead.checker()}
+func (a *app) readiness() []health.Checker {
+	checks := []health.Checker{a.pgRead.checker()}
 
 	if a.redis != nil {
 		client := a.redis
@@ -298,8 +300,12 @@ func (a *app) readiness() []observability.Checker {
 
 // Close освобождает ресурсы в порядке, обратном захвату.
 //
+// продюсера обязан идти по собственному сроку, иначе батч в полёте пропадёт.
+//
 // Продюсер закрывается первым и с дренажом: в его батчах лежат голоса, за
 // которые клиенту уже ответили 202.
+//
+//nolint:contextcheck // вызывается после отмены корневого контекста: дренаж
 func (a *app) Close() {
 	var errs []error
 

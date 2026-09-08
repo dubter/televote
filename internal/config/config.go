@@ -8,8 +8,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -518,7 +516,8 @@ func validateDebugAddr(addr string, production bool) error {
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
-		return nil // имя хоста разрешит рантайм; запретить можем только явную публичность
+		//nolint:nilerr // имя хоста разрешит рантайм; запретить можем только явную публичность
+		return nil
 	}
 	if !ip.IsLoopback() {
 		return fmt.Errorf("в production pprof обязан слушать loopback, получено %q — используйте 127.0.0.1 или off", host)
@@ -532,7 +531,7 @@ func validatePublicBaseURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("не разбирается как URL: %v", err)
+		return fmt.Errorf("не разбирается как URL: %w", err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("ожидается абсолютный http(s) URL, получено %q", raw)
@@ -541,33 +540,6 @@ func validatePublicBaseURL(raw string) error {
 		return fmt.Errorf("URL без хоста: %q", raw)
 	}
 	return nil
-}
-
-func decodeHexKey(raw string) ([32]byte, error) {
-	var key [32]byte
-	if len(raw) != hex.EncodedLen(ballotKeySize) {
-		return key, fmt.Errorf("ожидается %d hex-символов (%d байт), получено %d",
-			hex.EncodedLen(ballotKeySize), ballotKeySize, len(raw))
-	}
-	buf, err := hex.DecodeString(raw)
-	if err != nil {
-		return key, fmt.Errorf("не hex: %v", err)
-	}
-	key = [32]byte(buf)
-	return key, nil
-}
-
-// decodeOrDeriveKey: настоящий hex-ключ декодируется, всё остальное
-// детерминированно сворачивается в 32 байта. Второе допустимо только вне
-// production — там validateProductionSecrets уже не дал бы стартовать.
-func decodeOrDeriveKey(raw, fallbackSeed string) ([32]byte, error) {
-	if raw == "" {
-		return sha256.Sum256([]byte(fallbackSeed)), nil
-	}
-	if key, err := decodeHexKey(raw); err == nil {
-		return key, nil
-	}
-	return sha256.Sum256([]byte(raw)), nil
 }
 
 // placeholderMarkers — маркеры незаполненных секретов из .env.example.

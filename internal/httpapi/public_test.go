@@ -20,6 +20,7 @@ import (
 	"github.com/OWNER/televote/internal/httpapi"
 	"github.com/OWNER/televote/internal/pollcfg"
 	"github.com/OWNER/televote/internal/producer"
+	"github.com/OWNER/televote/pkg/httpx"
 )
 
 var testSalt = []byte("test-poll-salt-0123456789abcdef!")
@@ -94,7 +95,7 @@ func newPublic(t *testing.T, cfg *pollcfg.HotConfig, sink *stubSink, now time.Ti
 
 	h, err := httpapi.NewPublicHandler(stubCache{cfg.Slug: cfg}, sink, func() time.Time { return now })
 	require.NoError(t, err)
-	return httpapi.ClientIP(nil)(h.Routes())
+	return httpx.ClientIP(nil)(h.Routes())
 }
 
 func postVote(t *testing.T, h http.Handler, slug, body string) *httptest.ResponseRecorder {

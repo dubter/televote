@@ -32,9 +32,13 @@ linters:
       rules:
         # domain не импортирует НИЧЕГО из проекта и почти ничего извне.
         # Список allow исчерпывающий: что не разрешено — запрещено.
+        #
+        # Тесты исключены: они живут в пакете domain_test, импортируют сам
+        # domain и testify, и это не нарушение границы, а способ её проверить.
         domain-is-pure:
           files:
             - "**/internal/domain/**"
+            - "!**/*_test.go"
           allow:
             - $gostd
             - github.com/google/uuid
@@ -48,14 +52,19 @@ linters:
           deny:
             - pkg: net/http
               desc: "HTTP живёт только в internal/httpapi; бизнес-слой о нём не знает"
-        # Секреты и голоса не должны утекать в сторонние логгеры.
-        no-adhoc-logging:
+        # В проекте один логгер — log/slog из stdlib. Сторонние тянут за собой
+        # свой формат вывода, и структурированные записи перестают
+        # коррелироваться с трейсами по trace_id.
+        single-logger:
           files:
             - "**/internal/**"
+            - "**/cmd/**"
           deny:
-            - pkg: log
-              desc: "используй log/slog из internal/observability"
             - pkg: github.com/sirupsen/logrus
+              desc: "в проекте один логгер — log/slog"
+            - pkg: go.uber.org/zap
+              desc: "в проекте один логгер — log/slog"
+            - pkg: github.com/rs/zerolog
               desc: "в проекте один логгер — log/slog"
 
     revive:
@@ -90,12 +99,17 @@ linters:
   exclusions:
     generated: lax
     rules:
-      # В тестах допустимы длинные функции и «магические» значения.
+      # В тестах другой набор компромиссов: фикстуры возвращают несколько
+      # значений без имён, запросы строятся без контекста, тела пустые.
+      # Это шум, а не дефекты, и он прячет настоящие находки.
       - path: _test\.go
         linters:
           - gosec
           - prealloc
           - errcheck
+          - noctx
+          - gocritic
+          - contextcheck
       # Lua-скрипт встроен строкой — gosec видит в нём «команду».
       - path: internal/vote/script\.go
         linters:

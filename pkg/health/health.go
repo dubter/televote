@@ -1,7 +1,7 @@
 // Package observability собирает телеметрию сервиса. Этот файл — только
 // health-эндпоинты: они обязаны работать даже когда всё остальное сломано,
 // поэтому не зависят ни от OTel, ни от логгера.
-package observability
+package health
 
 import (
 	"context"

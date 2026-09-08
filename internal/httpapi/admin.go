@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -19,8 +20,8 @@ import (
 
 // PollStore — то, что админке нужно от хранилища опросов.
 type PollStore interface {
-	CreateRow(ctx context.Context, row *postgres.PollRow) error
-	GetRowBySlug(ctx context.Context, slug string) (*postgres.PollRow, error)
+	Create(ctx context.Context, p *domain.Poll) error
+	GetBySlug(ctx context.Context, slug string) (*domain.Poll, error)
 	ListActive(ctx context.Context) ([]*domain.Poll, error)
 	Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error
 	HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error)
@@ -101,7 +102,7 @@ type claimsKeyType int
 const claimsKey claimsKeyType = 0
 
 // requireRole пропускает запрос только с токеном нужного уровня.
-func (h *AdminHandler) requireRole(min auth.Role) func(http.Handler) http.Handler {
+func (h *AdminHandler) requireRole(required auth.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -115,7 +116,7 @@ func (h *AdminHandler) requireRole(min auth.Role) func(http.Handler) http.Handle
 				WriteError(w, r, errUnauthorized)
 				return
 			}
-			if !claims.Role.AtLeast(min) {
+			if !claims.Role.AtLeast(required) {
 				WriteError(w, r, errForbidden)
 				return
 			}
@@ -126,7 +127,10 @@ func (h *AdminHandler) requireRole(min auth.Role) func(http.Handler) http.Handle
 }
 
 func claimsFrom(ctx context.Context) *auth.Claims {
-	claims, _ := ctx.Value(claimsKey).(*auth.Claims)
+	claims, ok := ctx.Value(claimsKey).(*auth.Claims)
+	if !ok {
+		return nil
+	}
 	return claims
 }
 
@@ -213,13 +217,18 @@ func (h *AdminHandler) createPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.buildPollRow(req)
+	spec, err := req.toSpec()
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
 
-	if err := h.polls.CreateRow(r.Context(), row); err != nil {
+	poll, err := domain.NewPoll(spec, h.now(), h.minLeadTime)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	if err := h.polls.Create(r.Context(), poll); err != nil {
 		if errors.Is(err, postgres.ErrSlugTaken) {
 			WriteError(w, r, errSlugTaken)
 			return
@@ -227,81 +236,35 @@ func (h *AdminHandler) createPoll(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, err)
 		return
 	}
-	h.audit(r, "create_poll", row.Slug, map[string]any{"question": row.Question})
+	h.audit(r, "create_poll", poll.Slug, map[string]any{"question": poll.Question})
 
-	writeJSON(w, http.StatusCreated, toPollResponse(&row.Poll))
+	writeJSON(w, http.StatusCreated, toPollResponse(poll))
 }
 
-// buildPollRow проверяет запрос и собирает строку опроса.
-//
-// Вынесено из хендлера: здесь одна ответственность — валидация и сборка, и
-// её видно целиком, не продираясь через HTTP.
-func (h *AdminHandler) buildPollRow(req createPollRequest) (*postgres.PollRow, error) {
-	pollType := domain.PollType(req.Type)
-	if !pollType.Valid() {
-		return nil, fmt.Errorf("%w: неизвестный тип опроса %q", errBadRequest, req.Type)
-	}
-	if req.Slug == "" || req.Question == "" {
-		return nil, fmt.Errorf("%w: slug и question обязательны", errBadRequest)
-	}
-	if len(req.Options) < 2 {
-		return nil, fmt.Errorf("%w: нужно минимум два варианта", errBadRequest)
-	}
-	if len(req.Options) > domain.MaxOptions {
-		return nil, fmt.Errorf("%w: вариантов больше %d", errBadRequest, domain.MaxOptions)
-	}
-
-	opensAt, err := time.Parse(time.RFC3339, req.OpensAt)
+// toSpec переводит запрос в спецификацию домена. Правила проверяет домен —
+// здесь только перевод формата.
+func (r createPollRequest) toSpec() (domain.PollSpec, error) {
+	opensAt, err := time.Parse(time.RFC3339, r.OpensAt)
 	if err != nil {
-		return nil, fmt.Errorf("%w: opens_at не RFC3339", errBadRequest)
+		return domain.PollSpec{}, fmt.Errorf("%w: opens_at не RFC3339", errBadRequest)
 	}
-	closesAt, err := time.Parse(time.RFC3339, req.ClosesAt)
+	closesAt, err := time.Parse(time.RFC3339, r.ClosesAt)
 	if err != nil {
-		return nil, fmt.Errorf("%w: closes_at не RFC3339", errBadRequest)
-	}
-	if !closesAt.After(opensAt) {
-		return nil, fmt.Errorf("%w: closes_at не позже opens_at", errBadRequest)
-	}
-	if h.minLeadTime > 0 && opensAt.Sub(h.now()) < h.minLeadTime {
-		return nil, fmt.Errorf("%w: опрос открывается раньше чем через %s — ёмкость не успеет подняться",
-			errBadRequest, h.minLeadTime)
+		return domain.PollSpec{}, fmt.Errorf("%w: closes_at не RFC3339", errBadRequest)
 	}
 
-	options := make([]domain.Option, 0, len(req.Options))
-	for i, text := range req.Options {
-		if strings.TrimSpace(text) == "" {
-			return nil, fmt.Errorf("%w: пустой вариант на позиции %d", errBadRequest, i)
-		}
-		options = append(options, domain.Option{Idx: uint8(i), Text: text})
-	}
-
-	minChoices, maxChoices := req.MinChoices, req.MaxChoices
-	if pollType == domain.PollTypeSingle {
-		minChoices, maxChoices = 1, 1
-	}
-
-	masters := req.RedisMasters
-	if masters <= 0 {
-		masters = 3
-	}
-
-	return &postgres.PollRow{
-		Poll: domain.Poll{
-			ID:         uuid.New(),
-			Slug:       req.Slug,
-			Question:   req.Question,
-			Type:       pollType,
-			Options:    options,
-			MinChoices: minChoices,
-			MaxChoices: maxChoices,
-			Status:     domain.StatusScheduled,
-			OpensAt:    opensAt,
-			ClosesAt:   closesAt,
-			ShardCount: domain.ShardCountFor(masters),
-			Version:    1,
-		},
-		ExpectedAudience:   req.ExpectedAudience,
-		ExpectedConversion: req.ExpectedConversion,
+	return domain.PollSpec{
+		Slug:               r.Slug,
+		Question:           r.Question,
+		Type:               domain.PollType(r.Type),
+		Options:            r.Options,
+		MinChoices:         r.MinChoices,
+		MaxChoices:         r.MaxChoices,
+		OpensAt:            opensAt,
+		ClosesAt:           closesAt,
+		ExpectedAudience:   r.ExpectedAudience,
+		ExpectedConversion: r.ExpectedConversion,
+		RedisMasters:       r.RedisMasters,
 	}, nil
 }
 
@@ -335,23 +298,23 @@ func (h *AdminHandler) closePoll(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) transition(w http.ResponseWriter, r *http.Request, to domain.Status, action string) {
 	slug := chi.URLParam(r, "slug")
 
-	row, err := h.polls.GetRowBySlug(r.Context(), slug)
+	poll, err := h.polls.GetBySlug(r.Context(), slug)
 	if err != nil {
 		WriteError(w, r, errNotFound)
 		return
 	}
-	if !row.Status.CanTransitionTo(to) {
-		WriteError(w, r, fmt.Errorf("%w: %s → %s", domain.ErrBadTransition, row.Status, to))
+	if !poll.Status.CanTransitionTo(to) {
+		WriteError(w, r, fmt.Errorf("%w: %s → %s", domain.ErrBadTransition, poll.Status, to))
 		return
 	}
-	if err := h.polls.Transition(r.Context(), row.ID, to, row.Version); err != nil {
+	if err := h.polls.Transition(r.Context(), poll.ID, to, poll.Version); err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	h.audit(r, action, slug, map[string]any{"from": string(row.Status), "to": string(to)})
+	h.audit(r, action, slug, map[string]any{"from": string(poll.Status), "to": string(to)})
 
-	row.Status = to
-	writeJSON(w, http.StatusOK, toPollResponse(&row.Poll))
+	poll.Status = to
+	writeJSON(w, http.StatusOK, toPollResponse(poll))
 }
 
 type optionResult struct {
@@ -373,30 +336,30 @@ type resultsResponse struct {
 }
 
 func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
-	row, err := h.polls.GetRowBySlug(r.Context(), chi.URLParam(r, "slug"))
+	poll, err := h.polls.GetBySlug(r.Context(), chi.URLParam(r, "slug"))
 	if err != nil {
 		WriteError(w, r, errNotFound)
 		return
 	}
 
-	final := row.Status == domain.StatusClosed || row.Status == domain.StatusArchived
+	final := poll.Status == domain.StatusClosed || poll.Status == domain.StatusArchived
 
 	var (
 		agg      domain.Aggregate
 		excluded []string
 	)
 	if final {
-		agg, excluded, err = h.results.GetAdjusted(r.Context(), row.ID)
+		agg, excluded, err = h.results.GetAdjusted(r.Context(), poll.ID)
 	} else {
-		agg, err = h.results.Get(r.Context(), row.ID)
+		agg, err = h.results.Get(r.Context(), poll.ID)
 	}
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
 
-	options := make([]optionResult, 0, len(row.Options))
-	for _, o := range row.Options {
+	options := make([]optionResult, 0, len(poll.Options))
+	for _, o := range poll.Options {
 		options = append(options, optionResult{
 			Idx:   o.Idx,
 			Text:  o.Text,
@@ -409,8 +372,8 @@ func (h *AdminHandler) pollResults(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resultsResponse{
-		Slug:    row.Slug,
-		Status:  string(row.Status),
+		Slug:    poll.Slug,
+		Status:  string(poll.Status),
 		Ballots: agg.Ballots,
 		Options: options,
 		Final:   final, ExcludedNets: excluded,
@@ -425,18 +388,14 @@ func (h *AdminHandler) audit(r *http.Request, action, entity string, payload any
 	if claims != nil {
 		actor = claims.Subject
 	}
-	if err := h.admins.Audit(r.Context(), actor, action, entity, payload); err != nil {
-		WriteError(nopWriter{}, r, err)
+	// Ошибка записи аудита не отменяет само действие, но и не остаётся
+	// незамеченной: без записи в журнале действие выглядит несовершённым.
+	if err := h.admins.Audit(r.Context(), actor, action, entity, payload); err != nil { //nolint:errcheck // ниже логируется
+		slog.ErrorContext(r.Context(), "не удалось записать действие в аудит",
+			slog.String("action", action), slog.String("entity", entity),
+			slog.String("error", err.Error()))
 	}
 }
-
-// nopWriter нужен, чтобы переиспользовать логирование WriteError там, где
-// ответ клиенту уже не отправляется.
-type nopWriter struct{}
-
-func (nopWriter) Header() http.Header         { return http.Header{} }
-func (nopWriter) Write(b []byte) (int, error) { return len(b), nil }
-func (nopWriter) WriteHeader(int)             {}
 
 func toPollResponse(p *domain.Poll) pollResponse {
 	options := make([]string, 0, len(p.Options))

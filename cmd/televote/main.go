@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/OWNER/televote/internal/config"
-	"github.com/OWNER/televote/internal/observability"
+	"github.com/OWNER/televote/pkg/health"
 )
 
 // version подставляется линкером: -ldflags "-X main.version=…".
@@ -76,21 +76,21 @@ func run(ctx context.Context) error {
 
 	// Готовность снимается до Shutdown, чтобы балансировщик увёл трафик раньше,
 	// чем сервер начнёт закрывать соединения.
-	gate := observability.NewGate()
+	gate := health.NewGate()
 
 	application, err := buildApp(ctx, cfg, logger, role(*roleFlag))
 	if err != nil {
 		return fmt.Errorf("сборка приложения: %w", err)
 	}
-	defer application.Close()
+	defer application.Close() //nolint:contextcheck // дренаж по собственному сроку
 
 	// Health обязан работать, даже когда всё остальное сломано, поэтому висит
 	// на корневом mux до и независимо от прикладного роутера.
-	health := observability.Handler(nil, append(application.readiness(), gate.Checker()))
+	healthHandler := health.Handler(nil, append(application.readiness(), gate.Checker()))
 
 	mux := http.NewServeMux()
-	mux.Handle("/livez", health)
-	mux.Handle("/readyz", health)
+	mux.Handle("/livez", healthHandler)
+	mux.Handle("/readyz", healthHandler)
 	mux.Handle("/metrics", promhttp.Handler())
 	if application.router != nil {
 		mux.Handle("/", application.router)

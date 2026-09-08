@@ -1,4 +1,4 @@
-package httpapi_test
+package httpx_test
 
 import (
 	"net/http"
@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/httpapi"
+	"github.com/OWNER/televote/pkg/httpx"
 )
 
 func mustPrefixes(tb testing.TB, cidrs ...string) []netip.Prefix {
@@ -29,7 +29,7 @@ func mustPrefixes(tb testing.TB, cidrs ...string) []netip.Prefix {
 // становится ключом лимита, поэтому проверять надо его, а не заголовки.
 func probe() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(httpapi.IPFromContext(r.Context()).String()))
+		_, _ = w.Write([]byte(httpx.IPFromContext(r.Context()).String()))
 	})
 }
 
@@ -37,7 +37,7 @@ func TestClientIP_TrustsProxyHop(t *testing.T) {
 	t.Parallel()
 
 	trusted := mustPrefixes(t, "10.0.0.0/8")
-	h := httpapi.ClientIP(trusted)(probe())
+	h := httpx.ClientIP(trusted)(probe())
 
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
 	r.RemoteAddr = "10.0.0.7:34567"
@@ -55,7 +55,7 @@ func TestClientIP_TrustsProxyHop(t *testing.T) {
 func TestNFR9_ForgedXFFIgnored(t *testing.T) {
 	t.Parallel()
 
-	h := httpapi.ClientIP(mustPrefixes(t, "10.0.0.0/8"))(probe())
+	h := httpx.ClientIP(mustPrefixes(t, "10.0.0.0/8"))(probe())
 
 	cases := []struct {
 		name string
@@ -92,13 +92,13 @@ func TestNFR9_IPv6LimitedByPrefix(t *testing.T) {
 	second := netip.MustParseAddr("2001:db8:abcd:1234:ffff:ffff:ffff:ffff")
 	other := netip.MustParseAddr("2001:db8:abcd:9999::1")
 
-	assert.Equal(t, httpapi.LimitKey(first), httpapi.LimitKey(second),
+	assert.Equal(t, httpx.LimitKey(first), httpx.LimitKey(second),
 		"адреса одной /64 обязаны делить ключ лимита")
-	assert.NotEqual(t, httpapi.LimitKey(first), httpapi.LimitKey(other))
+	assert.NotEqual(t, httpx.LimitKey(first), httpx.LimitKey(other))
 
 	v4 := netip.MustParseAddr("203.0.113.42")
-	assert.Equal(t, "203.0.113.42", httpapi.LimitKey(v4), "для IPv4 ключ — полный адрес")
-	assert.Equal(t, "unknown", httpapi.LimitKey(netip.Addr{}))
+	assert.Equal(t, "203.0.113.42", httpx.LimitKey(v4), "для IPv4 ключ — полный адрес")
+	assert.Equal(t, "unknown", httpx.LimitKey(netip.Addr{}))
 }
 
 // Агрегат накрутки считается по подсети: она показывает аномалию и не
@@ -110,15 +110,15 @@ func TestNet16_AggregatesBySubnet(t *testing.T) {
 	b := netip.MustParseAddr("203.0.99.1")
 	c := netip.MustParseAddr("198.51.100.9")
 
-	assert.Equal(t, httpapi.Net16(a), httpapi.Net16(b))
-	assert.NotEqual(t, httpapi.Net16(a), httpapi.Net16(c))
-	assert.NotContains(t, httpapi.Net16(a), "113.42", "полный адрес не имеет права попасть в агрегат")
+	assert.Equal(t, httpx.Net16(a), httpx.Net16(b))
+	assert.NotEqual(t, httpx.Net16(a), httpx.Net16(c))
+	assert.NotContains(t, httpx.Net16(a), "113.42", "полный адрес не имеет права попасть в агрегат")
 }
 
 func TestRateLimit_ReturnsTooManyRequestsWithRetryAfter(t *testing.T) {
 	t.Parallel()
 
-	h := httpapi.ClientIP(nil)(httpapi.RateLimit(2, time.Minute)(
+	h := httpx.ClientIP(nil)(httpx.RateLimit(2, time.Minute)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }),
 	))
 
@@ -142,7 +142,7 @@ func TestBlockDatacenterASN_Returns403(t *testing.T) {
 	t.Parallel()
 
 	ranges := mustPrefixes(t, "198.51.100.0/24")
-	h := httpapi.ClientIP(nil)(httpapi.BlockDatacenterASN(ranges)(
+	h := httpx.ClientIP(nil)(httpx.BlockDatacenterASN(ranges)(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }),
 	))
 
@@ -168,18 +168,18 @@ func TestUAClass_CollapsesMinorVersions(t *testing.T) {
 	iphone18a := "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1_1 like Mac OS X) AppleWebKit/605.1.15"
 	iphone18b := "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15"
 
-	assert.Equal(t, httpapi.UAClass(iphone18a), httpapi.UAClass(iphone18b),
+	assert.Equal(t, httpx.UAClass(iphone18a), httpx.UAClass(iphone18b),
 		"минорные версии обязаны схлопываться, иначе класс становится отпечатком")
-	assert.Equal(t, "iOS 18", httpapi.UAClass(iphone18a))
-	assert.Equal(t, "Android 14", httpapi.UAClass("Mozilla/5.0 (Linux; Android 14; Pixel 8)"))
-	assert.Equal(t, "unknown", httpapi.UAClass(""))
-	assert.NotContains(t, httpapi.UAClass(iphone18a), "AppleWebKit")
+	assert.Equal(t, "iOS 18", httpx.UAClass(iphone18a))
+	assert.Equal(t, "Android 14", httpx.UAClass("Mozilla/5.0 (Linux; Android 14; Pixel 8)"))
+	assert.Equal(t, "unknown", httpx.UAClass(""))
+	assert.NotContains(t, httpx.UAClass(iphone18a), "AppleWebKit")
 }
 
 func TestNFR9_SecurityHeadersPresent(t *testing.T) {
 	t.Parallel()
 
-	h := httpapi.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := httpx.SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

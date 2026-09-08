@@ -1,5 +1,5 @@
 // Package httpapi содержит HTTP-слой: приём голоса, админку и middleware.
-package httpapi
+package httpx
 
 import (
 	"context"
@@ -31,7 +31,10 @@ func ClientIP(trusted []netip.Prefix) func(http.Handler) http.Handler {
 // IPFromContext возвращает адрес клиента. Невалидный адрес означает, что
 // middleware не отработал — вызывающий обязан это учитывать.
 func IPFromContext(ctx context.Context) netip.Addr {
-	addr, _ := ctx.Value(clientIPKey).(netip.Addr)
+	addr, ok := ctx.Value(clientIPKey).(netip.Addr)
+	if !ok {
+		return netip.Addr{}
+	}
 	return addr
 }
 
@@ -55,15 +58,15 @@ func resolveClientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
 		}
 	}
 
-	if real, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
-		return real.Unmap()
+	if fromHeader, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
+		return fromHeader.Unmap()
 	}
 	return peer
 }
 
 func peerAddr(remoteAddr string) netip.Addr {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
+	host, _, splitErr := net.SplitHostPort(remoteAddr)
+	if splitErr != nil {
 		host = remoteAddr
 	}
 	addr, err := netip.ParseAddr(strings.TrimSpace(host))

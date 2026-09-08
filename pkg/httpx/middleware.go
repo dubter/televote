@@ -1,6 +1,7 @@
-package httpapi
+package httpx
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -24,15 +25,17 @@ func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Hand
 	}
 	retryAfter := strconv.Itoa(int(window.Seconds()))
 
-	return httprate.Limit(
+	return httprate.LimitBy(
 		perWindow,
 		window,
-		httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
+		func(r *http.Request) (string, error) {
+			// Ключ считает LimitKey поверх адреса, который положил ClientIP:
+			// готовые key-функции httprate берут заголовки как есть.
 			return LimitKey(IPFromContext(r.Context())), nil
-		}),
+		},
 		httprate.WithLimitHandler(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Retry-After", retryAfter)
-			writeJSONError(w, http.StatusTooManyRequests, "rate_limited")
+			writeError(w, http.StatusTooManyRequests, "rate_limited")
 		}),
 	)
 }
@@ -53,7 +56,7 @@ func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
 			if addr := IPFromContext(r.Context()); addr.IsValid() {
 				for _, prefix := range ranges {
 					if prefix.Contains(addr) {
-						writeJSONError(w, http.StatusForbidden, "blocked")
+						writeError(w, http.StatusForbidden, "blocked")
 						return
 					}
 				}
@@ -67,6 +70,8 @@ func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
 //
 // Без неё паника на одном голосе роняет весь инстанс, а при 2M RPS это
 // заметная доля приёма.
+//
+//nolint:contextcheck // контекст берётся из самого запроса, он здесь и нужен
 func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +81,7 @@ func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 						slog.Any("panic", rec),
 						slog.String("path", r.URL.Path),
 						slog.String("stack", string(debug.Stack())))
-					writeJSONError(w, http.StatusInternalServerError, "internal")
+					writeError(w, http.StatusInternalServerError, "internal")
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -96,4 +101,14 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeError отдаёт отказ в том же формате, что и остальной API.
+//
+// Пакет не зависит от прикладного слоя намеренно: middleware обязано работать
+// и там, где обработчиков ещё нет — например, до монтирования роутера.
+func writeError(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code}) //nolint:errcheck,errchkjson // заголовки отправлены
 }

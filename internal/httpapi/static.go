@@ -45,7 +45,7 @@ func servePage(body []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")
-		_, _ = w.Write(body)
+		_, _ = w.Write(body) //nolint:errcheck // обрыв соединения на отдаче страницы — событие клиента
 	}
 }
 
@@ -63,6 +63,6 @@ func qrHandler(baseURL string) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "image/png")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		_, _ = w.Write(png)
+		_, _ = w.Write(png) //nolint:errcheck,gosec // PNG сгенерирован нами, XSS невозможен
 	}
 }

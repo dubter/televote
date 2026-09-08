@@ -23,43 +23,6 @@ import (
 // HMAC всё равно свернёт ключ хэшем.
 const SaltLen = 32
 
-// PollRow — строка таблицы polls целиком: доменный опрос плюс поля control
-// plane, которых в domain.Poll нет.
-//
-// Соль и ожидаемая аудитория не доменные понятия: правила голосования от них не
-// зависят, и domain.Poll о них не знает (это же держит depguard: домену нельзя
-// знать про крипто-ключи и планирование ёмкости). Но хранятся они в той же
-// строке и читаются тем же запросом, поэтому тип, который их несёт, живёт здесь.
-//
-// Методы domain.Poll доступны через встраивание, сам опрос — через .Poll.
-type PollRow struct {
-	domain.Poll
-
-	// ExpectedAudience — ожидаемое число зрителей. Из него функция ёмкости
-	// выводит число подов, мастеров Redis и партиций Kafka. Пер-опрос, потому
-	// что конверсия в ТЗ не задана и допущение обязано быть параметром.
-	ExpectedAudience int64
-
-	// ExpectedConversion — ожидаемая доля голосующих, 0..1. Доля, а не проценты.
-	ExpectedConversion float64
-}
-
-// ExpectedVotes — ожидаемое число голосов: аудитория × конверсия.
-//
-// Именно эта величина, а не аудитория, определяет ёмкость: приём масштабируется
-// под голоса. Насыщение до нуля защищает от отрицательного произведения при
-// порче строки — отрицательная ёмкость свернулась бы в ноль подов.
-func (r *PollRow) ExpectedVotes() int64 {
-	v := float64(r.ExpectedAudience) * r.ExpectedConversion
-	if v <= 0 {
-		return 0
-	}
-	if v > math.MaxInt64 {
-		return math.MaxInt64
-	}
-	return int64(v)
-}
-
 // PollRepo — доступ к конфигурации опросов.
 type PollRepo struct {
 	db *pgxpool.Pool
@@ -105,40 +68,13 @@ const (
 	predPollUpcoming = `p.status = 'scheduled' AND p.opens_at <= now() + make_interval(secs => $1)`
 )
 
-// Create создаёт опрос вместе с опциями и генерирует соль.
-//
-// Опрос без опций и опции без опроса одинаково бесполезны, поэтому запись идёт
-// одной транзакцией: частично созданный опрос попал бы в кэш конфига и начал
-// отвергать все голоса как «неизвестный индекс».
-//
-// Соль генерирует сервер из crypto/rand — клиент на неё влиять не может, иначе
-// подобранная соль связала бы voter_id между опросами.
-//
-// Поля control plane получают значения по умолчанию из схемы: подпись задана
-// блоком Produces плана и несёт только доменный опрос. Когда админка знает
-// ожидаемую аудиторию, она вызывает CreateRow.
-func (r *PollRepo) Create(ctx context.Context, p *domain.Poll) error {
-	if p == nil {
-		return errors.New("postgres: Create без опроса")
-	}
-	row := &PollRow{
-		Poll:               *p,
-		ExpectedConversion: defaultExpectedConversion,
-	}
-	return r.CreateRow(ctx, row)
-}
-
-// defaultExpectedConversion — расчётный сценарий из design.md §2: 30 %.
-// Значение дублирует DEFAULT в схеме, потому что CreateRow пишет колонку явно.
-const defaultExpectedConversion = 0.30
-
-// CreateRow создаёт опрос со всеми полями control plane.
+// Create создаёт опрос со всеми полями control plane.
 //
 // Соль всегда генерируется заново и переданное значение row.Salt игнорируется:
 // принимать соль извне — значит позволить вызывающему подать слабую или общую.
 // Сгенерированное значение записывается в row.Salt, чтобы вызывающий увидел его
 // без повторного чтения из базы.
-func (r *PollRepo) CreateRow(ctx context.Context, row *PollRow) error {
+func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 	if row == nil {
 		return errors.New("postgres: CreateRow без опроса")
 	}
@@ -209,29 +145,11 @@ func (r *PollRepo) CreateRow(ctx context.Context, row *PollRow) error {
 
 // GetBySlug читает опрос по слагу.
 func (r *PollRepo) GetBySlug(ctx context.Context, slug string) (*domain.Poll, error) {
-	row, err := r.GetRowBySlug(ctx, slug)
-	if err != nil {
-		return nil, err
-	}
-	return &row.Poll, nil
-}
-
-// GetRowBySlug читает строку опроса по слагу, включая соль.
-func (r *PollRepo) GetRowBySlug(ctx context.Context, slug string) (*PollRow, error) {
 	return r.one(ctx, predPollBySlug, slug)
 }
 
 // GetByID читает опрос по идентификатору.
 func (r *PollRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Poll, error) {
-	row, err := r.GetRowByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return &row.Poll, nil
-}
-
-// GetRowByID читает строку опроса по идентификатору, включая соль.
-func (r *PollRepo) GetRowByID(ctx context.Context, id uuid.UUID) (*PollRow, error) {
 	return r.one(ctx, predPollByID, id)
 }
 
@@ -240,39 +158,18 @@ func (r *PollRepo) GetRowByID(ctx context.Context, id uuid.UUID) (*PollRow, erro
 // Оба статуса, а не только open: приём должен знать конфигурацию опроса ещё до
 // открытия, иначе первые голоса после перехода получат «неизвестный опрос»,
 // пока рефрешер не сходит в базу.
-func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
-	rows, err := r.ListActiveRows(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return toPolls(rows), nil
-}
-
-// ListActiveRows возвращает строки активных опросов, включая соль.
-//
 // Это запрос фонового рефрешера конфига: он ходит раз в 2 с с каждого инстанса,
 // и предикат совпадает с частичным индексом, чтобы стоимость была O(активных
 // опросов), а не O(архива).
-func (r *PollRepo) ListActiveRows(ctx context.Context) ([]*PollRow, error) {
+func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return r.many(ctx, predPollActive)
 }
 
 // ListUpcoming возвращает scheduled-опросы, открытие которых наступает не
 // позднее чем через within.
-func (r *PollRepo) ListUpcoming(ctx context.Context, within time.Duration) ([]*domain.Poll, error) {
-	rows, err := r.ListUpcomingRows(ctx, within)
-	if err != nil {
-		return nil, err
-	}
-	return toPolls(rows), nil
-}
-
-// ListUpcomingRows возвращает строки предстоящих опросов, включая ожидаемую
-// аудиторию — из неё выводится ёмкость на прогрев.
-//
 // Горизонт сравнивается с now() базы, а не сервиса: часы инстансов расходятся, и
 // прогрев по локальному времени начался бы на разных инстансах в разный момент.
-func (r *PollRepo) ListUpcomingRows(ctx context.Context, within time.Duration) ([]*PollRow, error) {
+func (r *PollRepo) ListUpcoming(ctx context.Context, within time.Duration) ([]*domain.Poll, error) {
 	if within < 0 {
 		within = 0
 	}
@@ -339,7 +236,7 @@ func (r *PollRepo) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, err
 }
 
 // one читает ровно один опрос по предикату.
-func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*PollRow, error) {
+func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.Poll, error) {
 	rows, err := r.many(ctx, pred, args...)
 	if err != nil {
 		return nil, err
@@ -356,7 +253,7 @@ func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*PollRow,
 // опций, и разбор всё равно свёлся бы к группировке. Опции выбираются подзапросом
 // с тем же предикатом, а не по списку собранных id, чтобы не кодировать массив
 // uuid и не терять опции опроса, созданного между двумя запросами.
-func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*PollRow, error) {
+func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domain.Poll, error) {
 	// Порядок детерминирован: вызывающие сравнивают срезы, а произвольный
 	// порядок строк из Postgres сделал бы такие сравнения флаки.
 	q := `SELECT ` + pollColumns + ` FROM polls p WHERE ` + pred + ` ORDER BY p.opens_at, p.id`
@@ -365,10 +262,10 @@ func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*PollR
 	if err != nil {
 		return nil, fmt.Errorf("postgres: выборка опросов (%s): %w", pred, err)
 	}
-	byID := make(map[uuid.UUID]*PollRow)
-	out := make([]*PollRow, 0, 8)
+	byID := make(map[uuid.UUID]*domain.Poll)
+	out := make([]*domain.Poll, 0, 8)
 	for rows.Next() {
-		row, err := scanPollRow(rows)
+		row, err := scanPoll(rows)
 		if err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("postgres: разбор строки опроса: %w", err)
@@ -426,9 +323,9 @@ func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*PollR
 // Прямое приведение int16 → uint8 на порченой строке дало бы другой индекс
 // опции без единой ошибки — ровно тот класс поломок, который в этом проекте
 // ловится тестом, а не логом.
-func scanPollRow(rows pgx.Rows) (*PollRow, error) {
+func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	var (
-		row        PollRow
+		row        domain.Poll
 		pollType   string
 		status     string
 		minChoices int16
@@ -470,15 +367,6 @@ func scanPollRow(rows pgx.Rows) (*PollRow, error) {
 	row.ShardCount = uint16(shardCount)
 	row.Version = uint32(version)
 	return &row, nil
-}
-
-// toPolls вырезает доменную часть из строк.
-func toPolls(rows []*PollRow) []*domain.Poll {
-	out := make([]*domain.Poll, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, &row.Poll)
-	}
-	return out
 }
 
 // sortedIndexes возвращает индексы опций агрегата по возрастанию.

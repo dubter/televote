@@ -12,6 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/OWNER/televote/internal/domain"
+	"github.com/OWNER/televote/pkg/httpx"
+
 	"github.com/OWNER/televote/internal/pollcfg"
 	"github.com/OWNER/televote/internal/producer"
 	"github.com/OWNER/televote/internal/vote"
@@ -139,7 +141,7 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, r, fmt.Errorf("%w: тело запроса", errBadRequest))
 			return
 		}
-		WriteError(w, r, fmt.Errorf("%w: %s", errBadRequest, err))
+		WriteError(w, r, fmt.Errorf("%w: %w", errBadRequest, err))
 		return
 	}
 
@@ -158,13 +160,13 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	addr := IPFromContext(r.Context())
+	addr := httpx.IPFromContext(r.Context())
 	msg := producer.VoteMessage{
 		PollID:     cfg.ID,
 		VoterID:    voterID.Hex(),
 		Choices:    req.Choices,
-		Net16:      Net16(addr),
-		UAClass:    UAClass(r.UserAgent()),
+		Net16:      httpx.Net16(addr),
+		UAClass:    httpx.UAClass(r.UserAgent()),
 		ProducedAt: h.now().UTC(),
 	}
 
@@ -172,7 +174,7 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		// Kafka недоступна — единственный отказ, останавливающий приём.
 		// Честный 503 с Retry-After, а не 200 за неучтённый голос.
 		w.Header().Set("Retry-After", "1")
-		WriteError(w, r, fmt.Errorf("%w: %s", errUnavailable, err))
+		WriteError(w, r, fmt.Errorf("%w: %w", errUnavailable, err))
 		return
 	}
 
