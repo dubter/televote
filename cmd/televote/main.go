@@ -92,6 +92,10 @@ func run(ctx context.Context) error {
 	mux.Handle("/livez", healthHandler)
 	mux.Handle("/readyz", healthHandler)
 	mux.Handle("/metrics", promhttp.Handler())
+	if application.advisor != nil {
+		// Не публичный маршрут: его читает external scaler KEDA.
+		mux.Handle("/internal/capacity", application.advisor.Handler())
+	}
 	if application.router != nil {
 		mux.Handle("/", application.router)
 	}

@@ -28,6 +28,7 @@ x-app-env: &app-env
   RATE_LIMIT_PER_MIN: "10000000"
   SNAPSHOT_INTERVAL: 2s
   SNAPSHOT_FINAL_GRACE: 5s
+  DRAIN_WINDOW: 5m
   POLL_CONFIG_REFRESH: 1s
   # На стенде ёмкость уже поднята, ждать час до открытия опроса незачем.
   POLL_MIN_LEAD_TIME: 0s

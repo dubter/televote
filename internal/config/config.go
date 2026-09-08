@@ -149,6 +149,11 @@ type Config struct {
 	// хвост голосов в полёте.
 	SnapshotFinalGrace time.Duration `env:"SNAPSHOT_FINAL_GRACE" envDefault:"30s"`
 
+	// DrainWindow — за сколько мы согласны досчитать голоса после эфира.
+	// Главный рычаг «стоимость против задержки результата»: из него выводится
+	// число мастеров Redis и консьюмеров.
+	DrainWindow time.Duration `env:"DRAIN_WINDOW" envDefault:"5m"`
+
 	// ─── наблюдаемость ───
 	OTLPEndpoint     string  `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:"http://otel-lgtm:4317"`
 	OTelServiceName  string  `env:"OTEL_SERVICE_NAME" envDefault:"televote"`
@@ -333,6 +338,9 @@ func (c *Config) validate() error {
 		fail("POSTGRES_MAX_CONNS", "должно быть положительным")
 	}
 
+	if c.DrainWindow <= 0 {
+		fail("DRAIN_WINDOW", "должно быть положительным: из него выводится ёмкость")
+	}
 	if c.PollMinLeadTime < 0 {
 		fail("POLL_MIN_LEAD_TIME", "не может быть отрицательным")
 	}

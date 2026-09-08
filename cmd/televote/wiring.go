@@ -12,6 +12,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/dubter/televote/internal/auth"
+	"github.com/dubter/televote/internal/capacity"
 	"github.com/dubter/televote/internal/config"
 	"github.com/dubter/televote/internal/consumer"
 	"github.com/dubter/televote/internal/httpapi"
@@ -45,15 +46,18 @@ type app struct {
 	role   role
 	router http.Handler
 
-	redis    rueidis.Client
-	pgWrite  *pgxpoolWrapper
-	pgRead   *pgxpoolWrapper
-	kafka    *kgo.Client
-	producer *producer.Producer
+	redis      rueidis.Client
+	pgWrite    *pgxpoolWrapper
+	pgRead     *pgxpoolWrapper
+	kafka      *kgo.Client
+	fraudKafka *kgo.Client
+	producer   *producer.Producer
 
 	cache       *pollcfg.Cache
 	counting    *consumer.Counting
+	fraud       *consumer.Fraud
 	snapshotter *snapshot.Snapshotter
+	advisor     *capacity.Advisor
 }
 
 // buildApp собирает зависимости в порядке «от внешних к внутренним».
@@ -171,13 +175,41 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("репозиторий результатов: %w", err)
 	}
 
-	a.snapshotter, err = snapshot.New(caster, results, pollsWrite, kafkaLag{a.kafka, a.cfg.KafkaTopic}, snapshot.Config{
+	lag := kafkaLag{a.kafka, a.cfg.KafkaTopic}
+
+	a.snapshotter, err = snapshot.New(caster, results, pollsWrite, lag, snapshot.Config{
 		Interval: a.cfg.SnapshotInterval,
 		Grace:    a.cfg.SnapshotFinalGrace,
 		Log:      a.log,
 	})
 	if err != nil {
 		return fmt.Errorf("снапшотер: %w", err)
+	}
+
+	// Анализ накрутки читает тот же топик ОТДЕЛЬНОЙ группой: общая забирала бы
+	// сообщения у подсчёта, потому что Kafka делит партиции между членами группы.
+	fraudClient, err := kgo.NewClient(
+		kgo.SeedBrokers(a.cfg.KafkaBrokers...),
+		kgo.ConsumeTopics(a.cfg.KafkaTopic),
+		kgo.ConsumerGroup(a.cfg.KafkaFraudGroup),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		return fmt.Errorf("kafka consumer (анализ): %w", err)
+	}
+	a.fraudKafka = fraudClient
+
+	a.fraud, err = consumer.NewFraud(fraudClient, a.redis, a.log, int64(a.cfg.DedupTTL.Seconds()))
+	if err != nil {
+		return fmt.Errorf("консьюмер анализа: %w", err)
+	}
+
+	a.advisor, err = capacity.New(pollsRead, lag, capacity.Config{
+		DrainWindow: a.cfg.DrainWindow,
+		PrewarmLead: a.cfg.PollMinLeadTime,
+	})
+	if err != nil {
+		return fmt.Errorf("советчик ёмкости: %w", err)
 	}
 	return nil
 }
@@ -269,6 +301,13 @@ func (a *app) runBackground(ctx context.Context) {
 			}
 		}()
 	}
+	if a.fraud != nil {
+		go func() {
+			if err := a.fraud.Run(ctx); err != nil {
+				a.log.ErrorContext(ctx, "консьюмер анализа остановлен", slog.Any("error", err))
+			}
+		}()
+	}
 	if a.snapshotter != nil {
 		go a.snapshotter.Run(ctx)
 	}
@@ -305,8 +344,10 @@ func (a *app) Close() {
 			errs = append(errs, fmt.Errorf("дренаж продюсера: %w", err))
 		}
 	}
-	if a.kafka != nil {
-		a.kafka.Close()
+	for _, c := range []*kgo.Client{a.kafka, a.fraudKafka} {
+		if c != nil {
+			c.Close()
+		}
 	}
 	if a.redis != nil {
 		a.redis.Close()
