@@ -25,6 +25,7 @@ wait_ready() {
 printf 'Ждём готовности'
 wait_ready app-1 "$APP1_PORT"
 wait_ready app-2 "$APP2_PORT"
+wait_ready lb "$APP_PORT"
 
 token=$(admin_token)
 [ -n "$token" ] || fail "не удалось войти в админку — проверь ADMIN_PASSWORD"
