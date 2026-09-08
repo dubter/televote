@@ -1,5 +1,7 @@
 package capacity
 
+//go:generate mockgen -source=advisor.go -destination=mocks/advisor.go -package=mocks
+
 import (
 	"context"
 	"errors"
@@ -62,12 +64,13 @@ func New(polls Polls, lag Lag, cfg Config) (*Advisor, error) {
 }
 
 type Advice struct {
-	Phase    Phase           `json:"phase"`
-	Reason   string          `json:"reason"`
-	PollSlug string          `json:"poll_slug,omitempty"`
-	OpensAt  string          `json:"opens_at,omitempty"`
-	Lag      int64           `json:"consumer_lag"`
-	Desired  domain.Capacity `json:"desired"`
+	Phase      Phase           `json:"phase"`
+	LagUnknown bool            `json:"lag_unknown,omitempty"`
+	Reason     string          `json:"reason"`
+	PollSlug   string          `json:"poll_slug,omitempty"`
+	OpensAt    string          `json:"opens_at,omitempty"`
+	Lag        int64           `json:"consumer_lag"`
+	Desired    domain.Capacity `json:"desired"`
 }
 
 func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
@@ -76,17 +79,24 @@ func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
 		return Advice{}, fmt.Errorf("capacity: list active polls: %w", err)
 	}
 
-	var lag int64
+	var (
+		lag        int64
+		lagUnknown bool
+	)
 	if a.lag != nil {
-		if v, lagErr := a.lag.Lag(ctx); lagErr == nil {
-			lag = v
+		v, lagErr := a.lag.Lag(ctx)
+		if lagErr != nil {
+			lag, lagUnknown = 1, true
 		} else {
-			lag = 1
+			lag = v
 		}
 	}
 
 	now := a.now()
-	advice := Advice{Phase: PhaseIdle, Reason: "next broadcast is far away", Lag: lag, Desired: a.baseline}
+	advice := Advice{
+		Phase: PhaseIdle, Reason: "next broadcast is far away",
+		Lag: lag, LagUnknown: lagUnknown, Desired: a.baseline,
+	}
 
 	for _, p := range polls {
 		want := domain.CapacityFor(p.ExpectedVotes(), a.drain)
@@ -96,20 +106,20 @@ func (a *Advisor) Advise(ctx context.Context) (Advice, error) {
 			return Advice{
 				Phase: PhaseLive, Reason: "votes are being accepted",
 				PollSlug: p.Slug, OpensAt: p.OpensAt.UTC().Format(time.RFC3339),
-				Lag: lag, Desired: want,
+				Lag: lag, LagUnknown: lagUnknown, Desired: want,
 			}, nil
 
 		case p.Status == domain.StatusOpen && lag > 0:
 			return Advice{
 				Phase: PhaseDrain, Reason: "intake closed, counting in progress",
-				PollSlug: p.Slug, Lag: lag, Desired: want,
+				PollSlug: p.Slug, Lag: lag, LagUnknown: lagUnknown, Desired: want,
 			}, nil
 
 		case now.Add(a.prewarm).After(p.OpensAt) && now.Before(p.ClosesAt):
 			advice = Advice{
 				Phase: PhasePrewarm, Reason: "broadcast is near, scaling capacity up",
 				PollSlug: p.Slug, OpensAt: p.OpensAt.UTC().Format(time.RFC3339),
-				Lag: lag, Desired: want,
+				Lag: lag, LagUnknown: lagUnknown, Desired: want,
 			}
 		}
 	}

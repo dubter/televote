@@ -68,7 +68,11 @@ func (p *Poll) IsOpenAt(t time.Time) bool {
 }
 
 func (w Window) IsOpenAt(t time.Time) bool {
-	if w.Status != StatusOpen || w.ClosesAt.IsZero() {
+	return w.Status == StatusOpen && w.Contains(t)
+}
+
+func (w Window) Contains(t time.Time) bool {
+	if w.ClosesAt.IsZero() {
 		return false
 	}
 	return !t.Before(w.OpensAt) && t.Before(w.ClosesAt)

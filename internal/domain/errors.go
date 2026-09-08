@@ -7,9 +7,11 @@ var (
 
 	ErrPollClosed = errors.New("poll_closed")
 
-	ErrOptionsImmutable = errors.New("options_immutable")
-
 	ErrBadTransition = errors.New("bad_transition")
 
 	ErrNotFound = errors.New("not_found")
+
+	ErrSlugTaken = errors.New("slug_taken")
+
+	ErrVersionConflict = errors.New("version_conflict")
 )

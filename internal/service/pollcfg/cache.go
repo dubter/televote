@@ -1,5 +1,7 @@
 package pollcfg
 
+//go:generate mockgen -source=cache.go -destination=mocks/cache.go -package=mocks
+
 import (
 	"bytes"
 	"context"
@@ -52,14 +54,6 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
-func WithRefreshTimeout(d time.Duration) Option {
-	return func(c *Cache) {
-		if d > 0 {
-			c.refreshTimeout = d
-		}
-	}
-}
-
 type Cache struct {
 	repo           Repo
 	interval       time.Duration
@@ -68,6 +62,7 @@ type Cache struct {
 
 	current     atomic.Pointer[snapshot]
 	lastRefresh atomic.Int64
+	obs         AgeObserver
 }
 
 func NewCache(repo Repo, interval time.Duration, opts ...Option) (*Cache, error) {
@@ -94,6 +89,15 @@ func (c *Cache) Warm(ctx context.Context) error {
 	return c.refresh(ctx)
 }
 
+type AgeObserver interface {
+	SetConfigAge(seconds float64)
+}
+
+func (c *Cache) WithObserver(obs AgeObserver) *Cache {
+	c.obs = obs
+	return c
+}
+
 func (c *Cache) Run(ctx context.Context) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -107,6 +111,7 @@ func (c *Cache) Run(ctx context.Context) {
 				c.log.WarnContext(ctx, "pollcfg: config refresh failed, serving the previous snapshot",
 					slog.String("error", err.Error()))
 			}
+			c.reportAge()
 		}
 	}
 }
@@ -127,6 +132,17 @@ func (c *Cache) ByID(id uuid.UUID) (*HotConfig, bool) {
 	}
 	cfg, ok := snap.byID[id]
 	return cfg, ok
+}
+
+func (c *Cache) reportAge() {
+	if c.obs == nil {
+		return
+	}
+	last := c.LastRefresh()
+	if last.IsZero() {
+		return
+	}
+	c.obs.SetConfigAge(time.Since(last).Seconds())
 }
 
 func (c *Cache) LastRefresh() time.Time {

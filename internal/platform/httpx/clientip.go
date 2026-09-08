@@ -94,18 +94,3 @@ func LimitKey(a netip.Addr) string {
 	}
 	return prefix.String()
 }
-
-func Net16(a netip.Addr) string {
-	if !a.IsValid() {
-		return "unknown"
-	}
-	bits := net16Bits
-	if a.Is6() && !a.Is4In6() {
-		bits = ipv6AggBits
-	}
-	prefix, err := a.Prefix(bits)
-	if err != nil {
-		return "unknown"
-	}
-	return prefix.String()
-}

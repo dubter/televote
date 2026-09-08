@@ -1,10 +1,13 @@
 package vote
 
+//go:generate mockgen -destination=mocks/redis.go -package=mocks github.com/redis/rueidis Client
+
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cespare/xxhash/v2"
@@ -37,8 +40,10 @@ func (r Result) String() string {
 var ErrInvalidArgs = errors.New("invalid_vote_args")
 
 const (
-	maxJitter         = 0.5
-	defaultCmdTimeout = 250 * time.Millisecond
+	maxJitter          = 0.5
+	defaultCmdTimeout  = 250 * time.Millisecond
+	aggregateShardCost = time.Millisecond
+	maxAggregateWait   = 30 * time.Second
 )
 
 type Caster struct {
@@ -62,6 +67,10 @@ func NewCaster(client rueidis.Client, ttl time.Duration, jitter float64, cmdTime
 		cmdTimeout = defaultCmdTimeout
 	}
 	return &Caster{client: client, ttl: ttl, jitter: jitter, cmdTimeout: cmdTimeout}, nil
+}
+
+func (c *Caster) aggregateTimeout(shardCount uint16) time.Duration {
+	return min(maxAggregateWait, c.cmdTimeout+time.Duration(shardCount)*aggregateShardCost)
 }
 
 func (c *Caster) keysFor(pollID uuid.UUID, shardCount uint16, v VoterID) (dedup, counter string) {
@@ -138,6 +147,9 @@ func (c *Caster) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uin
 		return domain.Aggregate{}, fmt.Errorf("%w: shardCount is zero", ErrInvalidArgs)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, c.aggregateTimeout(shardCount))
+	defer cancel()
+
 	cmds := make(rueidis.Commands, 0, shardCount)
 	for shard := range shardCount {
 		cmds = append(cmds, c.client.B().Hgetall().Key(CounterKey(pollID, shard)).Build())
@@ -191,7 +203,25 @@ func IsRetryable(err error) bool {
 		}
 	}
 	if redisErr, ok := errors.AsType[*rueidis.RedisError](err); ok {
-		return redisErr.IsLoading() || redisErr.IsClusterDown() || redisErr.IsTryAgain()
+		_, moved := redisErr.IsMoved()
+		_, ask := redisErr.IsAsk()
+		return moved || ask ||
+			redisErr.IsLoading() || redisErr.IsClusterDown() || redisErr.IsTryAgain() ||
+			transientReply(redisErr.Error())
 	}
 	return true
+}
+
+var transientReplies = []string{
+	"READONLY", "MASTERDOWN", "CLUSTERDOWN", "TRYAGAIN",
+	"LOADING", "OOM", "BUSY", "NOREPLICAS",
+}
+
+func transientReply(msg string) bool {
+	for _, prefix := range transientReplies {
+		if strings.HasPrefix(msg, prefix) {
+			return true
+		}
+	}
+	return false
 }

@@ -94,7 +94,7 @@ linters:
           - noctx
           - gocritic
           - contextcheck
-      - path: internal/vote/script\.go
+      - path: internal/service/vote/script\.go
         linters:
           - gosec
 

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"maps"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,9 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.uber.org/mock/gomock"
 
-	"github.com/dubter/televote/internal/adapter/producer"
 	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/service/consumer/mocks"
 	"github.com/dubter/televote/internal/service/pollcfg"
 	"github.com/dubter/televote/internal/service/vote"
 )
@@ -26,86 +25,9 @@ var (
 	opensAt  = time.Date(2026, 9, 8, 20, 47, 30, 0, time.UTC)
 	closesAt = opensAt.Add(time.Minute)
 	testSalt = []byte("consumer-test-salt-0123456789abc")
+
+	errRedisDown = errors.New("redis недоступен")
 )
-
-type fakeApplier struct {
-	mu       sync.Mutex
-	seen     map[vote.VoterID]bool
-	votes    map[uint8]int64
-	ballots  int64
-	calls    int
-	failWith error
-	failFor  int
-}
-
-func newFakeApplier() *fakeApplier {
-	return &fakeApplier{seen: map[vote.VoterID]bool{}, votes: map[uint8]int64{}}
-}
-
-func (f *fakeApplier) Cast(_ context.Context, _ uuid.UUID, _ uint16, v vote.VoterID, choices []uint8) (vote.Result, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	f.calls++
-	if f.failFor > 0 {
-		f.failFor--
-		return 0, f.failWith
-	}
-
-	if f.seen[v] {
-		return vote.ResultAlreadyCounted, nil
-	}
-	f.seen[v] = true
-	for _, idx := range choices {
-		f.votes[idx]++
-	}
-	f.ballots++
-	return vote.ResultCounted, nil
-}
-
-func (f *fakeApplier) snapshot() (map[uint8]int64, int64, int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	out := make(map[uint8]int64, len(f.votes))
-	maps.Copy(out, f.votes)
-	return out, f.ballots, f.calls
-}
-
-type fakeLookup map[uuid.UUID]*pollcfg.HotConfig
-
-func (f fakeLookup) ByID(id uuid.UUID) (*pollcfg.HotConfig, bool) {
-	cfg, ok := f[id]
-	return cfg, ok
-}
-
-type recordingObserver struct {
-	mu       sync.Mutex
-	counted  []vote.Result
-	rejected []string
-}
-
-func (o *recordingObserver) VoteCounted(r vote.Result) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.counted = append(o.counted, r)
-}
-
-func (o *recordingObserver) VoteRejected(reason string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.rejected = append(o.rejected, reason)
-}
-
-func (o *recordingObserver) ApplySeconds(float64) {}
-
-func (o *recordingObserver) reasons() []string {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	out := make([]string, len(o.rejected))
-	copy(out, o.rejected)
-	return out
-}
 
 func testConfig(t *testing.T) *pollcfg.HotConfig {
 	t.Helper()
@@ -127,13 +49,18 @@ func testConfig(t *testing.T) *pollcfg.HotConfig {
 	}
 }
 
-func newTestCounting(t *testing.T, applier Applier, cfg *pollcfg.HotConfig, obs Observer) *Counting {
+func newTestCounting(t *testing.T, cfg Config) (
+	*Counting, *mocks.MockApplier, *mocks.MockConfigLookup, *mocks.MockObserver,
+) {
 	t.Helper()
 
-	c := newCounting(applier, fakeLookup{cfg.ID: cfg}, obs,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Config{RetryBudget: 2 * time.Second, LookupBudget: 300 * time.Millisecond})
-	return c
+	ctrl := gomock.NewController(t)
+	applier := mocks.NewMockApplier(ctrl)
+	lookup := mocks.NewMockConfigLookup(ctrl)
+	obs := mocks.NewMockObserver(ctrl)
+
+	c := newCounting(applier, lookup, obs, slog.New(slog.NewTextHandler(io.Discard, nil)), cfg)
+	return c, applier, lookup, obs
 }
 
 func record(t *testing.T, cfg *pollcfg.HotConfig, clientID string, choices []uint8, at time.Time) *kgo.Record {
@@ -142,49 +69,51 @@ func record(t *testing.T, cfg *pollcfg.HotConfig, clientID string, choices []uin
 	v, err := vote.DeriveVoterID(cfg.Salt, clientID)
 	require.NoError(t, err)
 
-	payload, err := json.Marshal(producer.VoteMessage{
+	payload, err := json.Marshal(domain.VoteMessage{
 		PollID: cfg.ID, VoterID: v.Hex(), Choices: choices, ProducedAt: at,
 	})
 	require.NoError(t, err)
 	return &kgo.Record{Value: payload}
 }
 
-func TestCounting_AppliesVote(t *testing.T) {
+func TestCounting_AppliesVoteExactlyOnceWithPollShardCount(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	obs := &recordingObserver{}
-	c := newTestCounting(t, applier, cfg, obs)
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
 
-	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).Times(1)
+	applier.EXPECT().
+		Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{1}).
+		Return(vote.ResultCounted, nil).
+		Times(1)
+	obs.EXPECT().ApplySeconds(gomock.Any()).Times(1)
+	obs.EXPECT().VoteCounted(vote.ResultCounted.String()).Times(1)
 
-	votes, ballots, _ := applier.snapshot()
-	assert.Equal(t, map[uint8]int64{1: 1}, votes)
-	assert.EqualValues(t, 1, ballots)
-	assert.Equal(t, []vote.Result{vote.ResultCounted}, obs.counted)
+	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{1}, opensAt.Add(time.Second)))
 }
 
 func TestCounting_DuplicateDeliveryDoesNotDoubleCount(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	obs := &recordingObserver{}
-	c := newTestCounting(t, applier, cfg, obs)
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
 
-	rec := record(t, cfg, "voter-1", []uint8{2}, opensAt.Add(time.Second))
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
+	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+
+	gomock.InOrder(
+		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{2}).
+			Return(vote.ResultCounted, nil),
+		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{2}).
+			Return(vote.ResultAlreadyCounted, nil).Times(4),
+	)
+	obs.EXPECT().VoteCounted(vote.ResultCounted.String()).Times(1)
+	obs.EXPECT().VoteCounted(vote.ResultAlreadyCounted.String()).Times(4)
+
+	rec := record(t, cfg, "viewer", []uint8{2}, opensAt.Add(time.Second))
 	for range 5 {
 		c.applyRecord(context.Background(), rec)
-	}
-
-	votes, ballots, _ := applier.snapshot()
-	assert.Equal(t, map[uint8]int64{2: 1}, votes, "счётчик вырос от повторной доставки")
-	assert.EqualValues(t, 1, ballots)
-
-	assert.Equal(t, vote.ResultCounted, obs.counted[0])
-	for _, r := range obs.counted[1:] {
-		assert.Equal(t, vote.ResultAlreadyCounted, r)
 	}
 }
 
@@ -192,107 +121,196 @@ func TestCounting_UsesProducedAtNotProcessingTime(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	c := newTestCounting(t, applier, cfg, &recordingObserver{})
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
+
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
+	applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
+		Return(vote.ResultCounted, nil).
+		Times(1)
+	obs.EXPECT().ApplySeconds(gomock.Any())
+	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
 
 	c.applyRecord(context.Background(), record(t, cfg, "late", []uint8{0}, closesAt.Add(-time.Second)))
-
-	_, ballots, _ := applier.snapshot()
-	assert.EqualValues(t, 1, ballots, "голос из окна обязан быть засчитан на любом дренаже")
 }
 
 func TestCounting_RejectsVoteProducedOutsideWindow(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	obs := &recordingObserver{}
-	c := newTestCounting(t, applier, cfg, obs)
+	c, _, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
+
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).Times(2)
+	obs.EXPECT().VoteRejected(reasonOutOfWindow).Times(2)
 
 	c.applyRecord(context.Background(), record(t, cfg, "early", []uint8{0}, opensAt.Add(-time.Second)))
 	c.applyRecord(context.Background(), record(t, cfg, "late", []uint8{0}, closesAt.Add(time.Second)))
-
-	_, ballots, _ := applier.snapshot()
-	assert.Zero(t, ballots)
-	assert.Equal(t, []string{reasonOutOfWindow, reasonOutOfWindow}, obs.reasons())
 }
 
 func TestCounting_RejectsMalformedAndUnknown(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	obs := &recordingObserver{}
-	c := newTestCounting(t, applier, cfg, obs)
+	c, _, lookup, obs := newTestCounting(t, Config{
+		RetryBudget: time.Second, LookupBudget: 20 * time.Millisecond,
+	})
+
+	foreignID := uuid.New()
+	lookup.EXPECT().ByID(foreignID).Return(nil, false).MinTimes(1)
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).Times(1)
+
+	gomock.InOrder(
+		obs.EXPECT().VoteRejected(reasonMalformed),
+		obs.EXPECT().VoteRejected(reasonUnknownPoll),
+		obs.EXPECT().VoteRejected(reasonBadVoterID),
+	)
 
 	c.applyRecord(context.Background(), &kgo.Record{Value: []byte("не json")})
 
-	foreign, err := json.Marshal(producer.VoteMessage{
-		PollID: uuid.New(), VoterID: "0123456789abcdef0123456789abcdef",
+	foreign, err := json.Marshal(domain.VoteMessage{
+		PollID: foreignID, VoterID: "0123456789abcdef0123456789abcdef",
 		Choices: []uint8{0}, ProducedAt: opensAt.Add(time.Second),
 	})
 	require.NoError(t, err)
 	c.applyRecord(context.Background(), &kgo.Record{Value: foreign})
 
-	badVoter, err := json.Marshal(producer.VoteMessage{
+	badVoter, err := json.Marshal(domain.VoteMessage{
 		PollID: cfg.ID, VoterID: "не-hex", Choices: []uint8{0}, ProducedAt: opensAt.Add(time.Second),
 	})
 	require.NoError(t, err)
 	c.applyRecord(context.Background(), &kgo.Record{Value: badVoter})
-
-	_, ballots, _ := applier.snapshot()
-	assert.Zero(t, ballots)
-	assert.Equal(t, []string{reasonMalformed, reasonUnknownPoll, reasonBadVoterID}, obs.reasons(),
-		"набор причин конечен: они уходят в метку метрики")
 }
 
-func TestCounting_RetriesTransientRedisError(t *testing.T) {
+func TestCounting_RetriesRetryableErrorUntilSuccess(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	applier.failWith = errors.New("connection reset by peer")
-	applier.failFor = 3
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: 2 * time.Second, LookupBudget: time.Second})
 
-	c := newTestCounting(t, applier, cfg, &recordingObserver{})
-	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
+	gomock.InOrder(
+		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
+			Return(vote.Result(0), errRedisDown),
+		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
+			Return(vote.Result(0), errRedisDown),
+		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
+			Return(vote.ResultCounted, nil),
+	)
+	obs.EXPECT().ApplySeconds(gomock.Any())
+	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
 
-	_, ballots, calls := applier.snapshot()
-	assert.EqualValues(t, 1, ballots, "голос обязан примениться после восстановления")
-	assert.Equal(t, 4, calls, "три отказа и одно удачное применение")
+	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
 }
 
 func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	applier.failWith = vote.ErrInvalidArgs
-	applier.failFor = 100
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
 
-	c := newTestCounting(t, applier, cfg, &recordingObserver{})
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
+	applier.EXPECT().Cast(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(vote.Result(0), vote.ErrInvalidArgs).
+		Times(1)
+	obs.EXPECT().ApplySeconds(gomock.Any())
+	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
 
-	start := time.Now()
-	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
+}
 
-	_, _, calls := applier.snapshot()
-	assert.Equal(t, 1, calls, "постоянная ошибка не ретраится")
-	assert.Less(t, time.Since(start), time.Second)
+func TestCounting_HoldsPartitionInsteadOfDroppingVote(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	c, applier, lookup, obs := newTestCounting(t, Config{
+		RetryBudget: 10 * time.Millisecond, LookupBudget: time.Second,
+	})
+
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
+	applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
+		Return(vote.Result(0), errRedisDown).
+		MinTimes(2)
+	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
+
+	voter, err := vote.DeriveVoterID(cfg.Salt, "viewer")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	res, err := c.applyWithRetry(ctx, cfg, voter, []uint8{0})
+	require.ErrorIs(t, err, context.DeadlineExceeded,
+		"ретраи обязаны идти, пока жив контекст: держать партицию лучше, чем потерять голос")
+	assert.Equal(t, vote.Result(0), res, "неприменённый голос не имеет права выглядеть посчитанным")
+
+	short, cancelShort := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancelShort()
+
+	c.applyRecord(short, record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
+}
+
+func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: 2 * time.Second})
+
+	gomock.InOrder(
+		lookup.EXPECT().ByID(cfg.ID).Return(nil, false),
+		lookup.EXPECT().ByID(cfg.ID).Return(nil, false),
+		lookup.EXPECT().ByID(cfg.ID).Return(cfg, true),
+	)
+	applier.EXPECT().Cast(gomock.Any(), cfg.ID, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(vote.ResultCounted, nil)
+	obs.EXPECT().ApplySeconds(gomock.Any())
+	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
+
+	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
 }
 
 func TestCounting_GivesUpOnGenuinelyUnknownPoll(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig(t)
-	applier := newFakeApplier()
-	obs := &recordingObserver{}
+	c, _, lookup, obs := newTestCounting(t, Config{
+		RetryBudget: time.Second, LookupBudget: 20 * time.Millisecond,
+	})
 
-	c := newTestCounting(t, applier, cfg, obs)
-	c.lookup = fakeLookup{} // опроса нет и не появится
+	lookup.EXPECT().ByID(cfg.ID).Return(nil, false).MinTimes(1)
+	obs.EXPECT().VoteRejected(reasonUnknownPoll).Times(1)
 
 	start := time.Now()
-	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{1}, opensAt.Add(time.Second)))
 
-	assert.Equal(t, []string{reasonUnknownPoll}, obs.reasons())
 	assert.Less(t, time.Since(start), 2*time.Second, "консьюмер завис на чужом сообщении")
+}
+
+func TestCounting_BreakerStopsCallingRedisAfterErrorRatio(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	c, applier, lookup, obs := newTestCounting(t, Config{
+		RetryBudget: 50 * time.Millisecond, LookupBudget: time.Second,
+		ErrorRatio: 0.5, BreakerWindow: time.Minute,
+	})
+
+	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
+	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
+	obs.EXPECT().SetBreakerOpen(true).MinTimes(1)
+
+	applier.EXPECT().Cast(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(vote.Result(0), errRedisDown).
+		MinTimes(breakerMinRequests).
+		MaxTimes(breakerMinRequests * 3)
+
+	for i := range 40 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		c.applyRecord(ctx, record(t, cfg, string(rune('a'+i%26)), []uint8{0}, opensAt.Add(time.Second)))
+		cancel()
+	}
+
+	_, err := c.breaker.Execute(func() (vote.Result, error) { return vote.ResultCounted, nil })
+	require.Error(t, err, "брейкер обязан быть открыт после серии отказов Redis")
+	assert.True(t, c.retryable(err), "открытый брейкер — временное состояние, голос надо повторить")
 }

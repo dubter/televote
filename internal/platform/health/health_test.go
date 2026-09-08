@@ -139,10 +139,14 @@ func TestReadyz_TimesOutSlowChecker(t *testing.T) {
 		}
 	}
 
-	h := health.Handler(nil, []health.Checker{hang}, health.WithTimeout(50*time.Millisecond))
+	h := health.Handler(nil, []health.Checker{hang})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
 
 	start := time.Now()
-	rec := get(t, h, "/readyz")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil).WithContext(ctx))
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Less(t, time.Since(start), time.Second, "зависший чекер обязан прерваться по таймауту")
@@ -158,7 +162,7 @@ func TestReadyz_PassesRequestContextToCheckers(t *testing.T) {
 		return nil
 	}
 
-	h := health.Handler(nil, []health.Checker{probe}, health.WithTimeout(time.Second))
+	h := health.Handler(nil, []health.Checker{probe})
 
 	rec := get(t, h, "/readyz")
 

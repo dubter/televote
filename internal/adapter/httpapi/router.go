@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"time"
@@ -17,6 +18,9 @@ type RouterConfig struct {
 	TrustedProxies   []netip.Prefix
 	DatacenterRanges []netip.Prefix
 	VoteRateLimit    int
+	AdminRateLimit   int
+	Logger           *slog.Logger
+	RequestObserver  httpx.RequestObserver
 	RateWindow       time.Duration
 	AllowedOrigins   []string
 	ServiceName      string
@@ -26,7 +30,8 @@ func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, 
 	r := chi.NewRouter()
 
 	r.Use(otelchi.Middleware(cfg.ServiceName, otelchi.WithChiRoutes(r)))
-	r.Use(httpx.Recovery(nil))
+	r.Use(httpx.Recovery(cfg.Logger))
+	r.Use(httpx.Metrics(cfg.RequestObserver))
 	r.Use(httpx.SecurityHeaders)
 	r.Use(httpx.ClientIP(cfg.TrustedProxies))
 
@@ -47,7 +52,10 @@ func NewRouter(public *PublicHandler, admin *AdminHandler, static http.Handler, 
 		})
 
 		if admin != nil {
-			api.Mount("/admin", admin.Routes())
+			api.Group(func(protected chi.Router) {
+				protected.Use(httpx.RateLimit(cfg.AdminRateLimit, cfg.RateWindow))
+				protected.Mount("/admin", admin.Routes())
+			})
 		}
 	})
 

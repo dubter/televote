@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ErrSlugTaken = errors.New("slug_taken")
+	ErrSlugTaken = domain.ErrSlugTaken
 
-	ErrVersionConflict = errors.New("version_conflict")
+	ErrVersionConflict = domain.ErrVersionConflict
 
 	ErrNotFound = domain.ErrNotFound
 )

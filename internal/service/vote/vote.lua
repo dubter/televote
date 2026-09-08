@@ -6,5 +6,6 @@ for i = 2, #ARGV do
   redis.call('HINCRBY', KEYS[2], ARGV[i], 1)
 end
 redis.call('HINCRBY', KEYS[2], 'b', 1)
+redis.call('EXPIRE', KEYS[2], ARGV[1])
 
 return 1

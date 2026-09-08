@@ -94,18 +94,6 @@ func TestNFR9_IPv6LimitedByPrefix(t *testing.T) {
 	assert.Equal(t, "unknown", httpx.LimitKey(netip.Addr{}))
 }
 
-func TestNet16_AggregatesBySubnet(t *testing.T) {
-	t.Parallel()
-
-	a := netip.MustParseAddr("203.0.113.42")
-	b := netip.MustParseAddr("203.0.99.1")
-	c := netip.MustParseAddr("198.51.100.9")
-
-	assert.Equal(t, httpx.Net16(a), httpx.Net16(b))
-	assert.NotEqual(t, httpx.Net16(a), httpx.Net16(c))
-	assert.NotContains(t, httpx.Net16(a), "113.42", "полный адрес не имеет права попасть в агрегат")
-}
-
 func TestRateLimit_ReturnsTooManyRequestsWithRetryAfter(t *testing.T) {
 	t.Parallel()
 
@@ -149,20 +137,6 @@ func TestBlockDatacenterASN_Returns403(t *testing.T) {
 		h.ServeHTTP(w, r)
 		assert.Equal(t, want, w.Code, "адрес %s", remote)
 	}
-}
-
-func TestUAClass_CollapsesMinorVersions(t *testing.T) {
-	t.Parallel()
-
-	iphone18a := "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1_1 like Mac OS X) AppleWebKit/605.1.15"
-	iphone18b := "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15"
-
-	assert.Equal(t, httpx.UAClass(iphone18a), httpx.UAClass(iphone18b),
-		"минорные версии обязаны схлопываться, иначе класс становится отпечатком")
-	assert.Equal(t, "iOS 18", httpx.UAClass(iphone18a))
-	assert.Equal(t, "Android 14", httpx.UAClass("Mozilla/5.0 (Linux; Android 14; Pixel 8)"))
-	assert.Equal(t, "unknown", httpx.UAClass(""))
-	assert.NotContains(t, httpx.UAClass(iphone18a), "AppleWebKit")
 }
 
 func TestNFR9_SecurityHeadersPresent(t *testing.T) {

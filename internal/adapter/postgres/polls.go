@@ -32,7 +32,7 @@ func NewPollRepo(db *pgxpool.Pool) (*PollRepo, error) {
 const pollColumns = `p.id, p.slug, p.question, p.type, p.min_choices, p.max_choices,
 	p.status, p.opens_at, p.closes_at, p.shard_count,
 	p.expected_audience, p.expected_conversion, p.salt,
-	p.results_visible_during_voting, p.version`
+	p.version`
 
 const (
 	predPollByID   = `p.id = $1`
@@ -76,14 +76,14 @@ func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 			INSERT INTO polls (id, slug, question, type, min_choices, max_choices,
 			                   status, opens_at, closes_at, shard_count,
 			                   expected_audience, expected_conversion, salt,
-			                   results_visible_during_voting, version)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+			                   version)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 		if _, err := tx.Exec(ctx, insertPoll,
 			row.ID, row.Slug, row.Question, string(row.Type),
 			int16(row.MinChoices), int16(row.MaxChoices), string(row.Status),
 			row.OpensAt, row.ClosesAt, int32(row.ShardCount),
 			row.ExpectedAudience, row.ExpectedConversion, salt,
-			row.ResultsVisibleDuringVoting, int64(version),
+			int64(version),
 		); err != nil {
 			return err
 		}
@@ -163,18 +163,6 @@ func versionedOutcome(id uuid.UUID, version uint32, applied, exists bool) error 
 	default:
 		return fmt.Errorf("postgres: poll %s, version %d: %w", id, version, ErrVersionConflict)
 	}
-}
-
-func (r *PollRepo) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error) {
-	const q = `
-		SELECT EXISTS (SELECT 1 FROM poll_results WHERE poll_id = $1 AND votes > 0)
-		    OR EXISTS (SELECT 1 FROM poll_stats   WHERE poll_id = $1 AND ballots_total > 0)`
-
-	var has bool
-	if err := r.db.QueryRow(ctx, q, id).Scan(&has); err != nil {
-		return false, fmt.Errorf("postgres: check votes of poll %s: %w", id, err)
-	}
-	return has, nil
 }
 
 func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.Poll, error) {
@@ -264,7 +252,7 @@ func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 		&row.ID, &row.Slug, &row.Question, &pollType, &minChoices, &maxChoices,
 		&status, &row.OpensAt, &row.ClosesAt, &shardCount,
 		&row.ExpectedAudience, &row.ExpectedConversion, &row.Salt,
-		&row.ResultsVisibleDuringVoting, &version,
+		&version,
 	); err != nil {
 		return nil, err
 	}

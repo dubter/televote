@@ -5,29 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dubter/televote/internal/domain"
 )
-
-type Admin struct {
-	ID           uuid.UUID
-	Login        string
-	PasswordHash string
-	Role         string
-	CreatedAt    time.Time
-}
-
-type AuditEntry struct {
-	ID      int64
-	Actor   string
-	Action  string
-	Entity  string
-	Payload []byte
-	At      time.Time
-}
 
 type AdminRepo struct {
 	db *pgxpool.Pool
@@ -40,13 +24,13 @@ func NewAdminRepo(db *pgxpool.Pool) (*AdminRepo, error) {
 	return &AdminRepo{db: db}, nil
 }
 
-func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
+func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*domain.Admin, error) {
 	const q = `
-		SELECT id, login, password_hash, role, created_at
+		SELECT id, login, password_hash, role
 		FROM admin_users WHERE login = $1`
 
-	var a Admin
-	err := r.db.QueryRow(ctx, q, login).Scan(&a.ID, &a.Login, &a.PasswordHash, &a.Role, &a.CreatedAt)
+	var a domain.Admin
+	err := r.db.QueryRow(ctx, q, login).Scan(&a.ID, &a.Login, &a.PasswordHash, &a.Role)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("postgres: admin: %w", ErrNotFound)
@@ -56,7 +40,7 @@ func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*Admin, error) {
 	return &a, nil
 }
 
-func (r *AdminRepo) EnsureAdmin(ctx context.Context, a Admin) (bool, error) {
+func (r *AdminRepo) EnsureAdmin(ctx context.Context, a domain.Admin) (bool, error) {
 	if a.Login == "" || a.PasswordHash == "" || a.Role == "" {
 		return false, errors.New("postgres: EnsureAdmin: login, hash and role are required")
 	}
@@ -104,37 +88,4 @@ func (r *AdminRepo) Audit(ctx context.Context, actor, action, entity string, pay
 		return fmt.Errorf("postgres: write audit %q/%q: %w", action, entity, err)
 	}
 	return nil
-}
-
-func (r *AdminRepo) ListAudit(ctx context.Context, entity string, limit int) ([]AuditEntry, error) {
-	const maxLimit = 1000
-	if limit <= 0 || limit > maxLimit {
-		limit = maxLimit
-	}
-
-	const q = `
-		SELECT id, actor, action, entity, payload, at
-		FROM admin_audit
-		WHERE $1 = '' OR entity = $1
-		ORDER BY at DESC, id DESC
-		LIMIT $2`
-
-	rows, err := r.db.Query(ctx, q, entity, limit)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: read audit: %w", err)
-	}
-	defer rows.Close()
-
-	out := make([]AuditEntry, 0, 16)
-	for rows.Next() {
-		var e AuditEntry
-		if err := rows.Scan(&e.ID, &e.Actor, &e.Action, &e.Entity, &e.Payload, &e.At); err != nil {
-			return nil, fmt.Errorf("postgres: scan audit row: %w", err)
-		}
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("postgres: read audit: %w", err)
-	}
-	return out, nil
 }

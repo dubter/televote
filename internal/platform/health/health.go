@@ -16,27 +16,14 @@ type Checker func(context.Context) error
 
 var ErrNotAcceptingTraffic = errors.New("instance is not accepting traffic: warming up or shutting down")
 
-type Option func(*health)
-
-func WithTimeout(d time.Duration) Option {
-	return func(h *health) {
-		if d > 0 {
-			h.timeout = d
-		}
-	}
-}
-
 type health struct {
 	live    []Checker
 	ready   []Checker
 	timeout time.Duration
 }
 
-func Handler(live, ready []Checker, opts ...Option) http.Handler {
+func Handler(live, ready []Checker) http.Handler {
 	h := &health{live: live, ready: ready, timeout: defaultCheckTimeout}
-	for _, opt := range opts {
-		opt(h)
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {

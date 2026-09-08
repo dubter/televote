@@ -49,22 +49,21 @@ type Option struct {
 }
 
 type Poll struct {
-	ID                         uuid.UUID
-	Slug                       string
-	Question                   string
-	Type                       PollType
-	Options                    []Option
-	MinChoices                 uint8
-	MaxChoices                 uint8
-	Status                     Status
-	OpensAt                    time.Time
-	ClosesAt                   time.Time
-	ShardCount                 uint16
-	ResultsVisibleDuringVoting bool
-	Salt                       []byte
-	ExpectedAudience           int64
-	ExpectedConversion         float64
-	Version                    uint32
+	ID                 uuid.UUID
+	Slug               string
+	Question           string
+	Type               PollType
+	Options            []Option
+	MinChoices         uint8
+	MaxChoices         uint8
+	Status             Status
+	OpensAt            time.Time
+	ClosesAt           time.Time
+	ShardCount         uint16
+	Salt               []byte
+	ExpectedAudience   int64
+	ExpectedConversion float64
+	Version            uint32
 }
 
 func (p *Poll) OptionCount() uint8 {

@@ -2,7 +2,6 @@
 SHELL := /bin/bash
 COMPOSE := docker compose -f deploy/docker-compose.yml
 LINTER := golangci/golangci-lint:v2.13.2
-MODULE := $(shell head -1 go.mod 2>/dev/null | cut -d' ' -f2)
 
 .PHONY: help
 help: ## показать эту справку
@@ -77,8 +76,8 @@ load: ## k6: стоимость одного голоса + сверка сум�
 	  k6 run /scripts/vote.js
 
 .PHONY: build
-build: ## собрать бинарь
-	@CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/televote ./cmd/televote
+build: ## собрать все бинарники
+	@go build -o bin/ ./cmd/...
 
 .PHONY: migrate
 migrate: ## применить миграции к локальной БД

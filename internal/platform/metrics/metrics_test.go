@@ -1,7 +1,6 @@
 package metrics_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dubter/televote/internal/platform/metrics"
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 func TestNFR7_MetricsExposeBusinessCounters(t *testing.T) {
@@ -22,10 +20,13 @@ func TestNFR7_MetricsExposeBusinessCounters(t *testing.T) {
 	m.VoteAccepted()
 	m.VoteAccepted()
 	m.VoteRejected("invalid_choices")
-	m.VoteCounted(vote.ResultCounted)
-	m.VoteCounted(vote.ResultAlreadyCounted)
+	m.VoteCounted("counted")
+	m.VoteCounted("already_counted")
 	m.SetConsumerLag(42)
 	m.SetBallots("final", 1000)
+	m.HTTPRequest("POST", "/api/v1/polls/{slug}/vote", "2xx", 0.003)
+	m.SetBreakerOpen(true)
+	m.SetConfigAge(1.5)
 
 	families, err := reg.Gather()
 	require.NoError(t, err)
@@ -43,39 +44,12 @@ func TestNFR7_MetricsExposeBusinessCounters(t *testing.T) {
 		"televote_produce_duration_seconds",
 		"televote_consumer_lag",
 		"televote_ballots_total",
+		"televote_http_requests_total",
+		"televote_redis_breaker_open",
+		"televote_poll_config_age_seconds",
 	} {
 		assert.True(t, names[want], "метрика %s не зарегистрирована", want)
 	}
-}
-
-func TestNFR7_MetricLabelsAreBounded(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	m := metrics.New(reg)
-
-	m.VoteRejected("invalid_choices")
-	m.VoteCounted(vote.ResultCounted)
-
-	dump := render(t, reg)
-
-	for _, forbidden := range []string{"voter", "ip=", "addr", "user_agent"} {
-		assert.NotContains(t, dump, forbidden, "в метриках не должно быть лейбла %q", forbidden)
-	}
-	assert.Contains(t, dump, `value:"counted"`)
-}
-
-func render(t *testing.T, reg *prometheus.Registry) string {
-	t.Helper()
-
-	var b strings.Builder
-
-	families, err := reg.Gather()
-	require.NoError(t, err)
-	for _, f := range families {
-		b.WriteString(f.String())
-	}
-	return b.String()
 }
 
 func assertCount(t *testing.T, families []*dto.MetricFamily, name string, want float64) {

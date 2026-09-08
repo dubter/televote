@@ -13,11 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
-	uuid "github.com/google/uuid"
-	gomock "go.uber.org/mock/gomock"
-
 	pollcfg "github.com/dubter/televote/internal/service/pollcfg"
 	vote "github.com/dubter/televote/internal/service/vote"
+	uuid "github.com/google/uuid"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockApplier is a mock of Applier interface.
@@ -134,8 +133,20 @@ func (mr *MockObserverMockRecorder) ApplySeconds(d any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApplySeconds", reflect.TypeOf((*MockObserver)(nil).ApplySeconds), d)
 }
 
+// SetBreakerOpen mocks base method.
+func (m *MockObserver) SetBreakerOpen(open bool) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetBreakerOpen", open)
+}
+
+// SetBreakerOpen indicates an expected call of SetBreakerOpen.
+func (mr *MockObserverMockRecorder) SetBreakerOpen(open any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetBreakerOpen", reflect.TypeOf((*MockObserver)(nil).SetBreakerOpen), open)
+}
+
 // VoteCounted mocks base method.
-func (m *MockObserver) VoteCounted(result vote.Result) {
+func (m *MockObserver) VoteCounted(result string) {
 	m.ctrl.T.Helper()
 	m.ctrl.Call(m, "VoteCounted", result)
 }

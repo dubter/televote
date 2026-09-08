@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/dubter/televote/internal/adapter/postgres"
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/auth"
 )
@@ -26,7 +25,6 @@ type PollStore interface {
 	List(ctx context.Context) ([]*domain.Poll, error)
 	CloseNow(ctx context.Context, id uuid.UUID, version uint32) error
 	Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error
-	HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error)
 }
 
 type ResultStore interface {
@@ -34,7 +32,7 @@ type ResultStore interface {
 }
 
 type AdminStore interface {
-	ByLogin(ctx context.Context, login string) (*postgres.Admin, error)
+	ByLogin(ctx context.Context, login string) (*domain.Admin, error)
 	Audit(ctx context.Context, actor, action, entity string, payload any) error
 }
 
@@ -214,7 +212,7 @@ func (h *AdminHandler) createPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.polls.Create(r.Context(), poll); err != nil {
-		if errors.Is(err, postgres.ErrSlugTaken) {
+		if errors.Is(err, domain.ErrSlugTaken) {
 			WriteError(w, r, errSlugTaken)
 			return
 		}
@@ -287,6 +285,7 @@ func (h *AdminHandler) closePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(r, "close_poll", slug, map[string]any{"from": string(poll.Status)})
 
+	poll.ClosesAt = h.now()
 	writeJSON(w, http.StatusOK, toPollResponse(poll))
 }
 

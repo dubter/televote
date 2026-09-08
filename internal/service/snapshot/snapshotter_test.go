@@ -12,106 +12,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/snapshot"
+	"github.com/dubter/televote/internal/service/snapshot/mocks"
 )
 
 var (
 	opensAt  = time.Date(2026, 9, 8, 20, 47, 30, 0, time.UTC)
 	closesAt = opensAt.Add(time.Minute)
 )
-
-type fakeAgg struct {
-	mu  sync.Mutex
-	agg domain.Aggregate
-	err error
-}
-
-func (f *fakeAgg) Aggregate(context.Context, uuid.UUID, uint16) (domain.Aggregate, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return domain.Aggregate{}, f.err
-	}
-	return f.agg, nil
-}
-
-func (f *fakeAgg) set(votes map[uint8]int64, ballots int64) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.agg = domain.NewAggregateFrom(votes, ballots)
-}
-
-type fakeResults struct {
-	mu  sync.Mutex
-	raw domain.Aggregate
-}
-
-func (f *fakeResults) Upsert(_ context.Context, _ uuid.UUID, a domain.Aggregate) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.raw = a.MergeMax(f.raw)
-	return nil
-}
-
-func (f *fakeResults) Get(context.Context, uuid.UUID) (domain.Aggregate, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.raw, nil
-}
-
-func (f *fakeResults) snapshot() domain.Aggregate {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.raw
-}
-
-type transition struct {
-	id uuid.UUID
-	to domain.Status
-}
-
-type fakePolls struct {
-	mu          sync.Mutex
-	polls       []*domain.Poll
-	transitions []transition
-}
-
-func (f *fakePolls) ListActive(context.Context) ([]*domain.Poll, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]*domain.Poll, len(f.polls))
-	copy(out, f.polls)
-	return out, nil
-}
-
-func (f *fakePolls) Transition(_ context.Context, id uuid.UUID, to domain.Status, _ uint32) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.transitions = append(f.transitions, transition{id, to})
-	for _, p := range f.polls {
-		if p.ID == id {
-			p.Status = to
-		}
-	}
-	return nil
-}
-
-func (f *fakePolls) moves() []transition {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]transition, len(f.transitions))
-	copy(out, f.transitions)
-	return out
-}
-
-type fakeLag struct {
-	lag int64
-	err error
-}
-
-func (f fakeLag) Lag(context.Context) (int64, error) { return f.lag, f.err }
 
 func openPoll() *domain.Poll {
 	return &domain.Poll{
@@ -120,7 +31,41 @@ func openPoll() *domain.Poll {
 	}
 }
 
-func newSnapshotter(t *testing.T, agg snapshot.Aggregator, res snapshot.Results, polls snapshot.Polls, lag snapshot.LagReader, now time.Time) *snapshot.Snapshotter {
+type stored struct {
+	mu  sync.Mutex
+	agg domain.Aggregate
+}
+
+func (s *stored) get() domain.Aggregate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.agg
+}
+
+func resultStore(t *testing.T, ctrl *gomock.Controller) (*mocks.MockResults, *stored) {
+	t.Helper()
+
+	s := &stored{}
+	m := mocks.NewMockResults(ctrl)
+	m.EXPECT().Get(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, uuid.UUID) (domain.Aggregate, error) { return s.get(), nil },
+	).AnyTimes()
+	m.EXPECT().Upsert(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ uuid.UUID, a domain.Aggregate) error {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.agg = a.MergeMax(s.agg)
+			return nil
+		},
+	).AnyTimes()
+	return m, s
+}
+
+func newSnapshotter(
+	t *testing.T,
+	agg snapshot.Aggregator, res snapshot.Results, polls snapshot.Polls, lag snapshot.LagReader,
+	now time.Time,
+) *snapshot.Snapshotter {
 	t.Helper()
 
 	s, err := snapshot.New(agg, res, polls, lag, snapshot.Config{
@@ -136,38 +81,43 @@ func newSnapshotter(t *testing.T, agg snapshot.Aggregator, res snapshot.Results,
 func TestTickOnce_WritesAggregateToPostgres(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	agg := &fakeAgg{}
-	agg.set(map[uint8]int64{0: 120, 1: 45}, 165)
-	res := &fakeResults{}
 
-	s := newSnapshotter(t, agg, res, &fakePolls{polls: []*domain.Poll{p}}, fakeLag{}, opensAt.Add(time.Second))
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		Return(domain.NewAggregateFrom(map[uint8]int64{0: 120, 1: 45}, 165), nil)
+
+	res, store := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, mocks.NewMockPolls(ctrl), mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
 
 	got, err := s.TickOnce(context.Background(), p)
 	require.NoError(t, err)
 	assert.Equal(t, map[uint8]int64{0: 120, 1: 45}, got.Votes)
 	assert.EqualValues(t, 165, got.Ballots)
-
-	raw := res.snapshot()
-	assert.Equal(t, got.Votes, raw.Votes)
+	assert.Equal(t, got.Votes, store.get().Votes)
 }
 
 func TestTickOnce_IsIdempotent(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	agg := &fakeAgg{}
-	agg.set(map[uint8]int64{0: 100}, 100)
-	res := &fakeResults{}
 
-	s := newSnapshotter(t, agg, res, &fakePolls{polls: []*domain.Poll{p}}, fakeLag{}, opensAt.Add(time.Second))
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		Return(domain.NewAggregateFrom(map[uint8]int64{0: 100}, 100), nil).
+		Times(5)
+
+	res, store := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, mocks.NewMockPolls(ctrl), mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
 
 	for range 5 {
 		_, err := s.TickOnce(context.Background(), p)
 		require.NoError(t, err)
 	}
 
-	raw := res.snapshot()
+	raw := store.get()
 	assert.Equal(t, map[uint8]int64{0: 100}, raw.Votes)
 	assert.EqualValues(t, 100, raw.Ballots)
 }
@@ -175,16 +125,23 @@ func TestTickOnce_IsIdempotent(t *testing.T) {
 func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	agg := &fakeAgg{}
-	res := &fakeResults{}
-	s := newSnapshotter(t, agg, res, &fakePolls{polls: []*domain.Poll{p}}, fakeLag{}, opensAt.Add(time.Second))
 
-	agg.set(map[uint8]int64{0: 1000, 1: 500}, 1500)
+	agg := mocks.NewMockAggregator(ctrl)
+	gomock.InOrder(
+		agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+			Return(domain.NewAggregateFrom(map[uint8]int64{0: 1000, 1: 500}, 1500), nil),
+		agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+			Return(domain.NewAggregateFrom(map[uint8]int64{0: 900, 1: 600}, 1490), nil),
+	)
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, mocks.NewMockPolls(ctrl), mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
+
 	_, err := s.TickOnce(context.Background(), p)
 	require.NoError(t, err)
 
-	agg.set(map[uint8]int64{0: 900, 1: 600}, 1490)
 	got, err := s.TickOnce(context.Background(), p)
 	require.NoError(t, err)
 
@@ -195,98 +152,138 @@ func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 func TestFR6_ScheduledOpensAutomatically(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
 	p.Status = domain.StatusScheduled
 
-	polls := &fakePolls{polls: []*domain.Poll{p}}
-	s := newSnapshotter(t, &fakeAgg{}, &fakeResults{}, polls, fakeLag{}, opensAt.Add(time.Second))
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+	polls.EXPECT().Transition(gomock.Any(), p.ID, domain.StatusOpen, p.Version).Return(nil).Times(1)
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, mocks.NewMockAggregator(ctrl), res, polls, mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
 
 	require.NoError(t, s.Tick(context.Background()))
-
-	moves := polls.moves()
-	require.Len(t, moves, 1)
-	assert.Equal(t, domain.StatusOpen, moves[0].to)
 }
 
 func TestTick_DoesNotOpenBeforeSchedule(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
 	p.Status = domain.StatusScheduled
 
-	polls := &fakePolls{polls: []*domain.Poll{p}}
-	s := newSnapshotter(t, &fakeAgg{}, &fakeResults{}, polls, fakeLag{}, opensAt.Add(-time.Minute))
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+	polls.EXPECT().Transition(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, mocks.NewMockAggregator(ctrl), res, polls, mocks.NewMockLagReader(ctrl), opensAt.Add(-time.Minute))
 
 	require.NoError(t, s.Tick(context.Background()))
-	assert.Empty(t, polls.moves())
 }
 
 func TestFinalize_WaitsForZeroLag(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	agg := &fakeAgg{}
-	agg.set(map[uint8]int64{0: 10}, 10)
-	res := &fakeResults{}
-	polls := &fakePolls{polls: []*domain.Poll{p}}
-
 	afterGrace := closesAt.Add(time.Minute)
 
-	busy := newSnapshotter(t, agg, res, polls, fakeLag{lag: 42}, afterGrace)
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		Return(domain.NewAggregateFrom(map[uint8]int64{0: 10}, 10), nil).
+		AnyTimes()
+
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil).AnyTimes()
+	polls.EXPECT().Transition(gomock.Any(), p.ID, domain.StatusClosed, p.Version).Return(nil).Times(1)
+
+	res, store := resultStore(t, ctrl)
+
+	busyLag := mocks.NewMockLagReader(ctrl)
+	busyLag.EXPECT().Lag(gomock.Any()).Return(int64(42), nil)
+	busy := newSnapshotter(t, agg, res, polls, busyLag, afterGrace)
 	require.NoError(t, busy.Tick(context.Background()))
 
-	assert.Empty(t, polls.moves(), "итог не зафиксирован до конца дренажа")
-
-	done := newSnapshotter(t, agg, res, polls, fakeLag{lag: 0}, afterGrace)
+	drainedLag := mocks.NewMockLagReader(ctrl)
+	drainedLag.EXPECT().Lag(gomock.Any()).Return(int64(0), nil)
+	done := newSnapshotter(t, agg, res, polls, drainedLag, afterGrace)
 	require.NoError(t, done.Tick(context.Background()))
 
-	assert.EqualValues(t, 10, res.snapshot().Ballots)
-
-	moves := polls.moves()
-	require.Len(t, moves, 1)
-	assert.Equal(t, domain.StatusClosed, moves[0].to)
+	assert.EqualValues(t, 10, store.get().Ballots)
 }
 
 func TestFinalize_WaitsForGracePeriod(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	res := &fakeResults{}
-	polls := &fakePolls{polls: []*domain.Poll{p}}
 
-	s := newSnapshotter(t, &fakeAgg{}, res, polls, fakeLag{lag: 0}, closesAt.Add(time.Second))
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).Return(domain.NewAggregate(), nil)
+
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+	polls.EXPECT().Transition(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	lag := mocks.NewMockLagReader(ctrl)
+	lag.EXPECT().Lag(gomock.Any()).Times(0)
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, polls, lag, closesAt.Add(time.Second))
+
 	require.NoError(t, s.Tick(context.Background()))
-
-	assert.Empty(t, polls.moves())
-}
-
-func TestFinalize_WritesLastSnapshotAndClosesPoll(t *testing.T) {
-	t.Parallel()
-
-	p := openPoll()
-	agg := &fakeAgg{}
-	agg.set(map[uint8]int64{0: 500}, 500)
-	res := &fakeResults{}
-	polls := &fakePolls{polls: []*domain.Poll{p}}
-
-	s := newSnapshotter(t, agg, res, polls, fakeLag{lag: 0}, closesAt.Add(time.Minute))
-	require.NoError(t, s.Finalize(context.Background(), p))
-
-	assert.Equal(t, map[uint8]int64{0: 500}, res.snapshot().Votes)
-
-	moves := polls.moves()
-	require.Len(t, moves, 1)
-	assert.Equal(t, domain.StatusClosed, moves[0].to)
 }
 
 func TestTickOnce_PropagatesRedisFailure(t *testing.T) {
 	t.Parallel()
 
+	ctrl := gomock.NewController(t)
 	p := openPoll()
-	agg := &fakeAgg{err: errors.New("redis недоступен")}
 
-	s := newSnapshotter(t, agg, &fakeResults{}, &fakePolls{polls: []*domain.Poll{p}}, fakeLag{}, opensAt.Add(time.Second))
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		Return(domain.Aggregate{}, errors.New("redis недоступен"))
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, mocks.NewMockPolls(ctrl), mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
 
 	_, err := s.TickOnce(context.Background(), p)
 	require.Error(t, err)
+}
+
+func TestTick_ReportsLagAndBallotsToObserver(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	p := openPoll()
+
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		Return(domain.NewAggregateFrom(map[uint8]int64{0: 7}, 7), nil)
+
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+
+	lag := mocks.NewMockLagReader(ctrl)
+	lag.EXPECT().Lag(gomock.Any()).Return(int64(1234), nil)
+
+	obs := mocks.NewMockObserver(ctrl)
+	obs.EXPECT().SetBallots(p.Slug, int64(7)).Times(1)
+	obs.EXPECT().SetConsumerLag(int64(1234)).Times(1)
+
+	res, _ := resultStore(t, ctrl)
+	s, err := snapshot.New(agg, res, polls, lag, snapshot.Config{
+		Interval: time.Hour,
+		Grace:    30 * time.Second,
+		Now:      func() time.Time { return closesAt.Add(time.Minute) },
+		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Observer: obs,
+	})
+	require.NoError(t, err)
+
+	polls.EXPECT().Transition(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+	require.NoError(t, s.Tick(context.Background()))
 }

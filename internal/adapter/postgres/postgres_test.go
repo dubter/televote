@@ -4,10 +4,12 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -16,7 +18,51 @@ import (
 
 	"github.com/dubter/televote/internal/adapter/postgres"
 	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/migrations"
 )
+
+func applySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+
+	entries, err := migrations.FS.ReadDir(".")
+	require.NoError(t, err)
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		body, readErr := migrations.FS.ReadFile(e.Name())
+		require.NoError(t, readErr)
+
+		sql := upSection(string(body))
+		require.NotEmpty(t, sql, "в миграции %s нет секции Up", e.Name())
+
+		_, execErr := pool.Exec(ctx, sql)
+		require.NoError(t, execErr, "миграция %s", e.Name())
+	}
+}
+
+func upSection(body string) string {
+	const (
+		up   = "-- +goose Up"
+		down = "-- +goose Down"
+	)
+
+	_, rest, found := strings.Cut(body, up)
+	if !found {
+		return ""
+	}
+	rest, _, _ = strings.Cut(rest, down)
+
+	var kept []string
+	for _, line := range strings.Split(rest, "\n") {
+		if strings.HasPrefix(line, "--") && strings.Contains(line, "+goose") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
 
 func startPostgres(t *testing.T) *postgres.PollRepo {
 	t.Helper()
@@ -218,13 +264,13 @@ func TestAdminRepo_EnsureAndAudit(t *testing.T) {
 	_, _, admins := startAll(t)
 	ctx := context.Background()
 
-	created, err := admins.EnsureAdmin(ctx, postgres.Admin{
+	created, err := admins.EnsureAdmin(ctx, domain.Admin{
 		Login: "admin", PasswordHash: "$argon2id$fake", Role: "admin",
 	})
 	require.NoError(t, err)
 	assert.True(t, created)
 
-	again, err := admins.EnsureAdmin(ctx, postgres.Admin{
+	again, err := admins.EnsureAdmin(ctx, domain.Admin{
 		Login: "admin", PasswordHash: "$argon2id$other", Role: "admin",
 	})
 	require.NoError(t, err)
@@ -235,11 +281,8 @@ func TestAdminRepo_EnsureAndAudit(t *testing.T) {
 	assert.Equal(t, "$argon2id$fake", got.PasswordHash, "пароль существующего админа не перезаписывается")
 
 	require.NoError(t, admins.Audit(ctx, got.ID.String(), "close_poll", "final", map[string]any{"to": "closed"}))
-
-	entries, err := admins.ListAudit(ctx, "final", 10)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "close_poll", entries[0].Action)
+	require.Error(t, admins.Audit(ctx, "", "close_poll", "final", nil),
+		"запись аудита без актора бесполезна и не имеет права молча пройти")
 }
 
 func TestAdminRepo_UnknownLogin(t *testing.T) {

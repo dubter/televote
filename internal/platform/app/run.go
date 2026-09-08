@@ -124,6 +124,7 @@ func Run(ctx context.Context, r Role) error {
 	if err := <-serveErr; err != nil {
 		shutdownErrs = append(shutdownErrs, err)
 	}
+	application.waitBackground(cfg.ShutdownGrace)
 
 	if err := errors.Join(shutdownErrs...); err != nil {
 		return err

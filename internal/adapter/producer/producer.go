@@ -7,18 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
-)
 
-type VoteMessage struct {
-	PollID     uuid.UUID `json:"p"`
-	VoterID    string    `json:"v"`
-	Choices    []uint8   `json:"c"`
-	Net16      string    `json:"n"`
-	UAClass    string    `json:"u"`
-	ProducedAt time.Time `json:"t"`
-}
+	"github.com/dubter/televote/internal/domain"
+)
 
 type Config struct {
 	Brokers        []string
@@ -73,7 +65,7 @@ func New(cfg Config) (*Producer, error) {
 	return &Producer{client: client, topic: cfg.Topic, timeout: cfg.ProduceTimeout}, nil
 }
 
-func (p *Producer) Send(ctx context.Context, m VoteMessage) error {
+func (p *Producer) Send(ctx context.Context, m domain.VoteMessage) error {
 	if m.ProducedAt.IsZero() {
 		m.ProducedAt = time.Now().UTC()
 	}
@@ -93,6 +85,16 @@ func (p *Producer) Send(ctx context.Context, m VoteMessage) error {
 	}
 	if err := p.client.ProduceSync(ctx, rec).FirstErr(); err != nil {
 		return fmt.Errorf("producer: send vote: %w", err)
+	}
+	return nil
+}
+
+func (p *Producer) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+
+	if err := p.client.Ping(ctx); err != nil {
+		return fmt.Errorf("producer: kafka ping: %w", err)
 	}
 	return nil
 }

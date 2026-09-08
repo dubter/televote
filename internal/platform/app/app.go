@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,7 @@ import (
 	"github.com/dubter/televote/internal/adapter/httpapi"
 	"github.com/dubter/televote/internal/adapter/postgres"
 	"github.com/dubter/televote/internal/adapter/producer"
+	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/platform/config"
 	"github.com/dubter/televote/internal/platform/health"
 	"github.com/dubter/televote/internal/platform/metrics"
@@ -29,6 +31,11 @@ import (
 )
 
 type Role string
+
+const (
+	adminRateLimit      = 120
+	lookupRefreshFactor = 3
+)
 
 const (
 	RoleAPI      Role = "api"
@@ -55,6 +62,7 @@ type app struct {
 	kafka    *kgo.Client
 	producer *producer.Producer
 
+	background  sync.WaitGroup
 	metrics     *metrics.Metrics
 	cache       *pollcfg.Cache
 	counting    *consumer.Counting
@@ -145,6 +153,8 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("poll config cache: %w", err)
 	}
+	a.cache = a.cache.WithObserver(a.metrics)
+
 	if err := a.cache.Warm(ctx); err != nil {
 		return fmt.Errorf("poll config cache warmup: %w", err)
 	}
@@ -161,6 +171,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 	if a.role.consumes() {
 		a.counting, err = consumer.NewCounting(a.kafka, caster, a.cache, a.metrics, a.log, consumer.Config{
 			RetryBudget:   a.cfg.VoteRetryBudget,
+			LookupBudget:  a.cfg.PollConfigRefresh * lookupRefreshFactor,
 			ErrorRatio:    a.cfg.BreakerErrorRatio,
 			BreakerWindow: a.cfg.BreakerWindow,
 		})
@@ -205,7 +216,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 }
 
 func (a *app) buildHTTP() error {
-	public, err := httpapi.NewPublicHandler(a.cache, a.producer, a.metrics, time.Now)
+	public, err := httpapi.NewPublicHandler(a.cache, a.producer, a.metrics, time.Now, a.cfg.MaxBodyBytes)
 	if err != nil {
 		return fmt.Errorf("public handler: %w", err)
 	}
@@ -219,6 +230,9 @@ func (a *app) buildHTTP() error {
 		TrustedProxies:   a.cfg.TrustedProxies,
 		DatacenterRanges: a.datacenterRanges(),
 		VoteRateLimit:    a.cfg.RateLimitPerMin,
+		AdminRateLimit:   adminRateLimit,
+		Logger:           a.log,
+		RequestObserver:  a.metrics,
 		RateWindow:       time.Minute,
 		ServiceName:      a.cfg.OTelServiceName,
 	})
@@ -263,7 +277,7 @@ func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
 		return fmt.Errorf("admin password hash: %w", err)
 	}
 
-	created, err := admins.EnsureAdmin(context.Background(), postgres.Admin{
+	created, err := admins.EnsureAdmin(context.Background(), domain.Admin{
 		Login:        a.cfg.AdminBootstrapLogin,
 		PasswordHash: hash,
 		Role:         string(auth.RoleAdmin),
@@ -279,22 +293,45 @@ func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
 }
 
 func (a *app) runBackground(ctx context.Context) {
-	go a.cache.Run(ctx)
+	a.background.Go(func() { a.cache.Run(ctx) })
 
 	if a.counting != nil {
-		go func() {
+		a.background.Go(func() {
 			if err := a.counting.Run(ctx); err != nil {
 				a.log.ErrorContext(ctx, "counting consumer stopped", slog.Any("error", err))
 			}
-		}()
+		})
 	}
 	if a.snapshotter != nil {
-		go a.snapshotter.Run(ctx)
+		a.background.Go(func() { a.snapshotter.Run(ctx) })
+	}
+}
+
+func (a *app) waitBackground(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		a.background.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		a.log.Warn("background workers did not stop in time",
+			slog.String("timeout", timeout.String()))
 	}
 }
 
 func (a *app) readiness() []health.Checker {
-	checks := []health.Checker{a.pgRead.Ping}
+	var checks []health.Checker
+
+	if a.role.servesHTTP() {
+		if a.producer != nil {
+			checks = append(checks, a.producer.Ping)
+		}
+	} else {
+		checks = append(checks, a.pgRead.Ping)
+	}
 
 	if a.redis != nil {
 		client := a.redis

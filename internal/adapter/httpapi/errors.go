@@ -43,15 +43,15 @@ func classify(err error) (status int, code string) {
 
 	case errors.Is(err, domain.ErrPollClosed):
 		return http.StatusConflict, "poll_closed"
-	case errors.Is(err, domain.ErrOptionsImmutable):
-		return http.StatusConflict, "options_immutable"
 	case errors.Is(err, domain.ErrBadTransition):
 		return http.StatusConflict, "bad_transition"
 	case errors.Is(err, errSlugTaken):
 		return http.StatusConflict, "slug_taken"
 
-	case errors.Is(err, errNotFound):
+	case errors.Is(err, errNotFound), errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound, "not_found"
+	case errors.Is(err, domain.ErrVersionConflict):
+		return http.StatusConflict, "version_conflict"
 	case errors.Is(err, errUnauthorized):
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, errForbidden):

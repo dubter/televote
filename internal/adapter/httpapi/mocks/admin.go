@@ -13,11 +13,9 @@ import (
 	context "context"
 	reflect "reflect"
 
+	domain "github.com/dubter/televote/internal/domain"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
-
-	postgres "github.com/dubter/televote/internal/adapter/postgres"
-	domain "github.com/dubter/televote/internal/domain"
 )
 
 // MockPollStore is a mock of PollStore interface.
@@ -85,21 +83,6 @@ func (m *MockPollStore) GetBySlug(ctx context.Context, slug string) (*domain.Pol
 func (mr *MockPollStoreMockRecorder) GetBySlug(ctx, slug any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBySlug", reflect.TypeOf((*MockPollStore)(nil).GetBySlug), ctx, slug)
-}
-
-// HasCountedVotes mocks base method.
-func (m *MockPollStore) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HasCountedVotes", ctx, id)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// HasCountedVotes indicates an expected call of HasCountedVotes.
-func (mr *MockPollStoreMockRecorder) HasCountedVotes(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasCountedVotes", reflect.TypeOf((*MockPollStore)(nil).HasCountedVotes), ctx, id)
 }
 
 // List mocks base method.
@@ -209,10 +192,10 @@ func (mr *MockAdminStoreMockRecorder) Audit(ctx, actor, action, entity, payload 
 }
 
 // ByLogin mocks base method.
-func (m *MockAdminStore) ByLogin(ctx context.Context, login string) (*postgres.Admin, error) {
+func (m *MockAdminStore) ByLogin(ctx context.Context, login string) (*domain.Admin, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ByLogin", ctx, login)
-	ret0, _ := ret[0].(*postgres.Admin)
+	ret0, _ := ret[0].(*domain.Admin)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

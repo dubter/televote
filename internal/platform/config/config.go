@@ -166,7 +166,7 @@ func (c *Config) DedupTTLLowerBound() time.Duration {
 }
 
 func (c *Config) DrainBudget() time.Duration {
-	return c.SnapshotFinalGrace + drainSafetyMargin
+	return c.DrainWindow + c.SnapshotFinalGrace + drainSafetyMargin
 }
 
 const drainSafetyMargin = 10 * time.Minute
@@ -334,7 +334,7 @@ func (c *Config) validate() error {
 }
 
 func (c *Config) validateDedupInvariant() error {
-	if c.DedupTTL <= 0 || c.SnapshotFinalGrace <= 0 {
+	if c.DedupTTL <= 0 || c.DrainWindow <= 0 {
 		return nil
 	}
 

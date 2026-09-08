@@ -1,5 +1,7 @@
 package httpapi
 
+//go:generate mockgen -source=public.go -destination=mocks/public.go -package=mocks
+
 import (
 	"context"
 	"encoding/json"
@@ -12,21 +14,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/dubter/televote/internal/domain"
-	"github.com/dubter/televote/internal/platform/httpx"
 
-	"github.com/dubter/televote/internal/adapter/producer"
 	"github.com/dubter/televote/internal/service/pollcfg"
 	"github.com/dubter/televote/internal/service/vote"
 )
-
-const maxVoteBody = 1024
 
 type ConfigCache interface {
 	BySlug(slug string) (*pollcfg.HotConfig, bool)
 }
 
 type VoteSink interface {
-	Send(ctx context.Context, m producer.VoteMessage) error
+	Send(ctx context.Context, m domain.VoteMessage) error
 }
 
 type Observer interface {
@@ -35,14 +33,19 @@ type Observer interface {
 	ProduceSeconds(d float64)
 }
 
+const defaultMaxVoteBody = 1024
+
 type PublicHandler struct {
-	cache ConfigCache
-	sink  VoteSink
-	obs   Observer
-	now   func() time.Time
+	cache   ConfigCache
+	sink    VoteSink
+	obs     Observer
+	now     func() time.Time
+	maxBody int64
 }
 
-func NewPublicHandler(cache ConfigCache, sink VoteSink, obs Observer, now func() time.Time) (*PublicHandler, error) {
+func NewPublicHandler(
+	cache ConfigCache, sink VoteSink, obs Observer, now func() time.Time, maxBody int64,
+) (*PublicHandler, error) {
 	if cache == nil {
 		return nil, errors.New("httpapi: poll config cache is required")
 	}
@@ -55,7 +58,10 @@ func NewPublicHandler(cache ConfigCache, sink VoteSink, obs Observer, now func()
 	if obs == nil {
 		obs = noopObserver{}
 	}
-	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now}, nil
+	if maxBody <= 0 {
+		maxBody = defaultMaxVoteBody
+	}
+	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now, maxBody: maxBody}, nil
 }
 
 func (h *PublicHandler) Routes() chi.Router {
@@ -122,7 +128,7 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req voteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxVoteBody)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.maxBody)).Decode(&req); err != nil {
 		h.obs.VoteRejected(reasonMalformed)
 		if errors.Is(err, io.EOF) || errors.As(err, new(*http.MaxBytesError)) {
 			WriteError(w, r, fmt.Errorf("%w: request body", errBadRequest))
@@ -150,13 +156,10 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	addr := httpx.IPFromContext(r.Context())
-	msg := producer.VoteMessage{
+	msg := domain.VoteMessage{
 		PollID:     cfg.ID,
 		VoterID:    voterID.Hex(),
 		Choices:    req.Choices,
-		Net16:      httpx.Net16(addr),
-		UAClass:    httpx.UAClass(r.UserAgent()),
 		ProducedAt: h.now().UTC(),
 	}
 

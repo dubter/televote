@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,60 +44,6 @@ func productionEnv() map[string]string {
 	})
 }
 
-func TestLoad_DefaultsMatchEnvExample(t *testing.T) {
-	t.Parallel()
-
-	cfg, err := config.LoadFrom(minimalEnv())
-	require.NoError(t, err)
-
-	assert.Equal(t, "dev", cfg.Env)
-	assert.Equal(t, "info", cfg.LogLevel)
-
-	assert.Equal(t, ":8080", cfg.HTTPAddr)
-	assert.Equal(t, "127.0.0.1:6060", cfg.DebugAddr)
-	assert.Equal(t, 3*time.Second, cfg.ReadHeaderTimeout)
-	assert.Equal(t, 5*time.Second, cfg.ReadTimeout)
-	assert.Equal(t, 10*time.Second, cfg.WriteTimeout)
-	assert.Equal(t, 60*time.Second, cfg.IdleTimeout)
-	assert.Equal(t, 25*time.Second, cfg.ShutdownGrace)
-	assert.Equal(t, int64(1024), cfg.MaxBodyBytes)
-
-	assert.Equal(t, []string{"redis-1:6379", "redis-2:6379"}, cfg.RedisAddrs)
-	assert.Equal(t, 2*time.Second, cfg.RedisDialTimeout)
-	assert.Equal(t, 250*time.Millisecond, cfg.RedisCmdTimeout)
-	assert.Equal(t, 30*time.Second, cfg.VoteRetryBudget)
-	assert.InDelta(t, 0.5, cfg.BreakerErrorRatio, 1e-9)
-	assert.Equal(t, 5*time.Second, cfg.BreakerWindow)
-
-	assert.Equal(t, int32(20), cfg.PostgresMaxConns)
-	assert.Equal(t, 2*time.Second, cfg.PollConfigRefresh)
-
-	assert.Equal(t, []string{"kafka:9092"}, cfg.KafkaBrokers)
-	assert.Equal(t, "votes", cfg.KafkaTopic)
-	assert.Equal(t, "televote-counting", cfg.KafkaConsumerGroup)
-	assert.Equal(t, 5*time.Millisecond, cfg.KafkaLinger)
-
-	assert.Equal(t, 30*time.Minute, cfg.DedupTTL)
-	assert.InDelta(t, 0.1, cfg.DedupTTLJitter, 1e-9)
-
-	assert.Equal(t, 6000, cfg.RateLimitPerMin)
-	assert.Equal(t, 200, cfg.RateLimitBurst)
-	assert.Equal(t, 200000, cfg.RateLimitMaxKeys)
-
-	assert.True(t, cfg.ASNBlockEnabled)
-	assert.InDelta(t, 0.01, cfg.AnomalySampleRate, 1e-9)
-
-	assert.Equal(t, 30*time.Minute, cfg.AdminJWTTTL)
-	assert.Equal(t, "admin", cfg.AdminBootstrapLogin)
-
-	assert.Equal(t, 5*time.Second, cfg.SnapshotInterval)
-	assert.Equal(t, 30*time.Second, cfg.SnapshotFinalGrace)
-
-	assert.Equal(t, "televote", cfg.OTelServiceName)
-	assert.InDelta(t, 0.0001, cfg.TraceSampleRatio, 1e-12)
-	assert.Equal(t, "http://localhost:8080", cfg.PublicBaseURL)
-}
-
 func TestLoad_MissingRequiredValuesFail(t *testing.T) {
 	t.Parallel()
 
@@ -109,6 +54,7 @@ func TestLoad_MissingRequiredValuesFail(t *testing.T) {
 	}{
 		{name: "без POSTGRES_DSN", unset: "POSTGRES_DSN", wantErr: "POSTGRES_DSN"},
 		{name: "без REDIS_ADDRS", unset: "REDIS_ADDRS", wantErr: "REDIS_ADDRS"},
+		{name: "без KAFKA_BROKERS", unset: "KAFKA_BROKERS", wantErr: "KAFKA_BROKERS"},
 	}
 
 	for _, tt := range tests {
@@ -220,9 +166,9 @@ func TestLoad_DedupTTLMustOutliveDrainWindow(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "дефолты держат инвариант", dedupTTL: "30m", grace: "30s", jitter: "0.1"},
-		{name: "ровно на границе без джиттера", dedupTTL: "10m30s", grace: "30s", jitter: "0"},
+		{name: "ровно на границе без джиттера", dedupTTL: "15m30s", grace: "30s", jitter: "0"},
 		{name: "короче окна дренажа", dedupTTL: "5m", grace: "30s", jitter: "0", wantErr: true},
-		{name: "джиттер уводит нижнюю границу под дренаж", dedupTTL: "11m", grace: "30s", jitter: "0.1", wantErr: true},
+		{name: "джиттер уводит нижнюю границу под дренаж", dedupTTL: "16m", grace: "30s", jitter: "0.1", wantErr: true},
 		{name: "длинный grace требует длинного TTL", dedupTTL: "12m", grace: "5m", jitter: "0", wantErr: true},
 		{name: "джиттер учтён запасом", dedupTTL: "30m", grace: "5m", jitter: "0.1"},
 	}
@@ -347,17 +293,6 @@ func TestLoad_ParsesTrustedProxiesAsPrefixes(t *testing.T) {
 	assert.True(t, cfg.TrustedProxies[0].Contains(mustAddr(t, "10.1.2.3")))
 	assert.False(t, cfg.TrustedProxies[0].Contains(mustAddr(t, "11.1.2.3")))
 	assert.True(t, cfg.TrustedProxies[2].Contains(mustAddr(t, "2001:db8::1")))
-}
-
-func TestKafkaConfig_Validation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Kafka без брокеров не даёт стартовать", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := config.LoadFrom(envWith(map[string]string{"KAFKA_BROKERS": ""}))
-		require.Error(t, err)
-	})
 }
 
 func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {

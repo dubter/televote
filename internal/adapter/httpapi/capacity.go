@@ -1,5 +1,7 @@
 package httpapi
 
+//go:generate mockgen -source=capacity.go -destination=mocks/capacity.go -package=mocks
+
 import (
 	"context"
 	"net/http"

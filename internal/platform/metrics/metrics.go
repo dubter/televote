@@ -3,8 +3,6 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 type Metrics struct {
@@ -15,6 +13,10 @@ type Metrics struct {
 	applyLatency   prometheus.Histogram
 	consumerLag    prometheus.Gauge
 	ballotsTotal   *prometheus.GaugeVec
+	httpRequests   *prometheus.CounterVec
+	httpLatency    *prometheus.HistogramVec
+	breakerOpen    prometheus.Gauge
+	configAge      prometheus.Gauge
 }
 
 func New(reg prometheus.Registerer) *Metrics {
@@ -47,6 +49,23 @@ func New(reg prometheus.Registerer) *Metrics {
 			Name: "televote_consumer_lag",
 			Help: "Messages in Kafka not applied yet. Zero means the drain is over.",
 		}),
+		httpRequests: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "televote_http_requests_total",
+			Help: "HTTP requests by route and status.",
+		}, []string{"method", "route", "status"}),
+		httpLatency: f.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "televote_http_request_duration_seconds",
+			Help:    "HTTP request latency by route.",
+			Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, 1},
+		}, []string{"method", "route"}),
+		breakerOpen: f.NewGauge(prometheus.GaugeOpts{
+			Name: "televote_redis_breaker_open",
+			Help: "1 while the circuit breaker in front of Redis is not closed.",
+		}),
+		configAge: f.NewGauge(prometheus.GaugeOpts{
+			Name: "televote_poll_config_age_seconds",
+			Help: "Age of the last successful poll config refresh.",
+		}),
 		ballotsTotal: f.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "televote_ballots_total",
 			Help: "Ballots in the latest result snapshot.",
@@ -58,8 +77,8 @@ func (m *Metrics) VoteAccepted() { m.votesAccepted.Inc() }
 
 func (m *Metrics) VoteRejected(reason string) { m.votesRejected.WithLabelValues(reason).Inc() }
 
-func (m *Metrics) VoteCounted(result vote.Result) {
-	m.votesCounted.WithLabelValues(result.String()).Inc()
+func (m *Metrics) VoteCounted(result string) {
+	m.votesCounted.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) ProduceSeconds(d float64) { m.produceLatency.Observe(d) }
@@ -71,3 +90,18 @@ func (m *Metrics) SetConsumerLag(n int64) { m.consumerLag.Set(float64(n)) }
 func (m *Metrics) SetBallots(pollSlug string, n int64) {
 	m.ballotsTotal.WithLabelValues(pollSlug).Set(float64(n))
 }
+
+func (m *Metrics) HTTPRequest(method, route, status string, seconds float64) {
+	m.httpRequests.WithLabelValues(method, route, status).Inc()
+	m.httpLatency.WithLabelValues(method, route).Observe(seconds)
+}
+
+func (m *Metrics) SetBreakerOpen(open bool) {
+	if open {
+		m.breakerOpen.Set(1)
+		return
+	}
+	m.breakerOpen.Set(0)
+}
+
+func (m *Metrics) SetConfigAge(seconds float64) { m.configAge.Set(seconds) }

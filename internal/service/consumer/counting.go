@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/dubter/televote/internal/adapter/producer"
+	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/pollcfg"
 	"github.com/dubter/televote/internal/service/vote"
 )
@@ -30,9 +30,10 @@ type ConfigLookup interface {
 }
 
 type Observer interface {
-	VoteCounted(result vote.Result)
+	VoteCounted(result string)
 	VoteRejected(reason string)
 	ApplySeconds(d float64)
+	SetBreakerOpen(open bool)
 }
 
 const (
@@ -107,7 +108,7 @@ func newCounting(applier Applier, lookup ConfigLookup, obs Observer, log *slog.L
 		log:          log,
 		retryBudget:  cfg.RetryBudget,
 		lookupBudget: cfg.LookupBudget,
-		breaker:      newBreaker(cfg, log),
+		breaker:      newBreaker(cfg, log, obs),
 		tracer:       otel.Tracer("televote/consumer"),
 	}
 }
@@ -117,10 +118,13 @@ const (
 	defaultLookupBudget  = 10 * time.Second
 	defaultErrorRatio    = 0.5
 	defaultBreakerWindow = 5 * time.Second
+	initialApplyBackoff  = 20 * time.Millisecond
+	maxApplyBackoff      = 2 * time.Second
+	fetchErrorBackoff    = 250 * time.Millisecond
 	breakerMinRequests   = 20
 )
 
-func newBreaker(cfg Config, log *slog.Logger) *gobreaker.CircuitBreaker[vote.Result] {
+func newBreaker(cfg Config, log *slog.Logger, obs Observer) *gobreaker.CircuitBreaker[vote.Result] {
 	return gobreaker.NewCircuitBreaker[vote.Result](gobreaker.Settings{
 		Name:     "redis-apply",
 		Interval: cfg.BreakerWindow,
@@ -133,6 +137,9 @@ func newBreaker(cfg Config, log *slog.Logger) *gobreaker.CircuitBreaker[vote.Res
 			log.Warn("consumer: breaker changed state",
 				slog.String("breaker", name),
 				slog.String("from", from.String()), slog.String("to", to.String()))
+			if obs != nil {
+				obs.SetBreakerOpen(to != gobreaker.StateClosed)
+			}
 		},
 	})
 }
@@ -147,6 +154,11 @@ func (c *Counting) Run(ctx context.Context) error {
 				}
 				c.log.ErrorContext(ctx, "consumer: read from kafka",
 					slog.String("topic", e.Topic), slog.String("error", e.Err.Error()))
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(fetchErrorBackoff):
 			}
 			continue
 		}
@@ -170,7 +182,7 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	ctx, span := c.tracer.Start(ctx, "vote.apply")
 	defer span.End()
 
-	var msg producer.VoteMessage
+	var msg domain.VoteMessage
 	if err := json.Unmarshal(rec.Value, &msg); err != nil {
 		c.reject(ctx, reasonMalformed, err)
 		return
@@ -182,7 +194,7 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 
-	if !cfg.Window.IsOpenAt(msg.ProducedAt) {
+	if !cfg.Window.Contains(msg.ProducedAt) {
 		c.reject(ctx, reasonOutOfWindow, fmt.Errorf("vote out of window: %s", msg.ProducedAt))
 		return
 	}
@@ -204,7 +216,7 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 	if c.obs != nil {
-		c.obs.VoteCounted(res)
+		c.obs.VoteCounted(res.String())
 	}
 }
 
@@ -247,7 +259,8 @@ func (c *Counting) applyWithRetry(
 	choices []uint8,
 ) (vote.Result, error) {
 	deadline := time.Now().Add(c.retryBudget)
-	backoff := 20 * time.Millisecond
+	backoff := initialApplyBackoff
+	warned := false
 
 	for {
 		res, err := c.breaker.Execute(func() (vote.Result, error) {
@@ -256,8 +269,15 @@ func (c *Counting) applyWithRetry(
 		if err == nil {
 			return res, nil
 		}
-		if !c.retryable(err) || time.Now().After(deadline) {
+		if !c.retryable(err) {
 			return 0, fmt.Errorf("consumer: apply vote of poll %s: %w", cfg.ID, err)
+		}
+		if !warned && time.Now().After(deadline) {
+			warned = true
+			c.log.WarnContext(ctx, "consumer: redis keeps failing, holding the partition",
+				slog.String("poll", cfg.ID.String()),
+				slog.String("budget", c.retryBudget.String()),
+				slog.String("error", err.Error()))
 		}
 
 		select {
@@ -265,7 +285,7 @@ func (c *Counting) applyWithRetry(
 			return 0, ctx.Err()
 		case <-time.After(backoff):
 		}
-		if backoff < time.Second {
+		if backoff < maxApplyBackoff {
 			backoff *= 2
 		}
 	}

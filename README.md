@@ -243,6 +243,16 @@ curl -X POST localhost:8080/api/v1/polls/demo/vote \
 | `televote_apply_duration_seconds` | histogram | один `EVALSHA` в Redis |
 | `televote_consumer_lag` | gauge | ноль означает конец дренажа |
 | `televote_ballots_total` | gauge | бюллетеней в последнем снимке |
+| `televote_http_requests_total` | counter | запросы по маршруту и классу статуса |
+| `televote_http_request_duration_seconds` | histogram | латентность по маршруту |
+| `televote_redis_breaker_open` | gauge | 1, пока брейкер перед Redis разомкнут |
+| `televote_poll_config_age_seconds` | gauge | возраст последнего удачного обновления конфигов |
+
+Мидлвари на каждом запросе: трейсинг (`otelchi`, спан на маршрут), защита от
+паник, HTTP-метрики, security-заголовки, разбор клиентского IP с проверкой
+доверенных прокси, лимит частоты и ASN-фильтр. Лога на каждый запрос
+намеренно нет: при 2M RPS это терабайты — в лог идут только ошибки 5xx и
+отклонённые голоса.
 
 Трейс сшивает приём и подсчёт: контекст едет в заголовках записи Kafka, поэтому
 HTTP-запрос и применение голоса в Redis минутами позже видны одним трейсом.

@@ -14,62 +14,75 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/pollcfg"
+	"github.com/dubter/televote/internal/service/pollcfg/mocks"
 )
 
 var errRepoDown = errors.New("postgres лежит")
 
-type fakeRepo struct {
+type source struct {
 	mu    sync.Mutex
 	polls []*domain.Poll
 	err   error
 	calls atomic.Int64
 }
 
-func newFakeRepo(polls ...*domain.Poll) *fakeRepo {
-	return &fakeRepo{polls: polls}
-}
-
-func (f *fakeRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
-	f.calls.Add(1)
+func (s *source) listActive(ctx context.Context) ([]*domain.Poll, error) {
+	s.calls.Add(1)
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if f.err != nil {
-		return nil, f.err
+	if s.err != nil {
+		return nil, s.err
 	}
 
-	out := make([]*domain.Poll, len(f.polls))
-	copy(out, f.polls)
+	out := make([]*domain.Poll, len(s.polls))
+	copy(out, s.polls)
 	return out, nil
 }
 
-func (f *fakeRepo) serve(polls ...*domain.Poll) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.polls, f.err = polls, nil
+func (s *source) serve(polls ...*domain.Poll) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.polls, s.err = polls, nil
 }
 
-func (f *fakeRepo) fail(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.err = err
+func (s *source) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
 }
 
-func (f *fakeRepo) callCount() int64 { return f.calls.Load() }
+func (s *source) callCount() int64 { return s.calls.Load() }
 
-type blockingRepo struct{}
+func newRepo(t *testing.T, polls ...*domain.Poll) (*mocks.MockRepo, *source) {
+	t.Helper()
 
-func (blockingRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
+	s := &source{polls: polls}
+	m := mocks.NewMockRepo(gomock.NewController(t))
+	m.EXPECT().ListActive(gomock.Any()).DoAndReturn(s.listActive).AnyTimes()
+	return m, s
+}
+
+func newBlockingRepo(t *testing.T) *mocks.MockRepo {
+	t.Helper()
+
+	m := mocks.NewMockRepo(gomock.NewController(t))
+	m.EXPECT().ListActive(gomock.Any()).DoAndReturn(
+		func(ctx context.Context) ([]*domain.Poll, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	).AnyTimes()
+	return m
 }
 
 type logCapture struct {
@@ -183,6 +196,8 @@ func assertMatchesPoll(t *testing.T, want *domain.Poll, got *pollcfg.HotConfig) 
 func TestNewCache_RejectsUnusableDependencies(t *testing.T) {
 	t.Parallel()
 
+	repo, _ := newRepo(t)
+
 	tests := []struct {
 		name     string
 		repo     pollcfg.Repo
@@ -190,9 +205,9 @@ func TestNewCache_RejectsUnusableDependencies(t *testing.T) {
 		wantErr  error
 	}{
 		{name: "источник не задан", repo: nil, interval: time.Second, wantErr: pollcfg.ErrNoRepo},
-		{name: "нулевой интервал", repo: newFakeRepo(), interval: 0, wantErr: pollcfg.ErrBadInterval},
-		{name: "отрицательный интервал", repo: newFakeRepo(), interval: -time.Second, wantErr: pollcfg.ErrBadInterval},
-		{name: "всё на месте", repo: newFakeRepo(), interval: time.Second},
+		{name: "нулевой интервал", repo: repo, interval: 0, wantErr: pollcfg.ErrBadInterval},
+		{name: "отрицательный интервал", repo: repo, interval: -time.Second, wantErr: pollcfg.ErrBadInterval},
+		{name: "всё на месте", repo: repo, interval: time.Second},
 	}
 
 	for _, tc := range tests {
@@ -215,7 +230,8 @@ func TestBySlug_ReturnsWarmedConfig(t *testing.T) {
 	t.Parallel()
 
 	live, upcoming := openPoll("final"), scheduledPoll("semifinal")
-	c := newCache(t, newFakeRepo(live, upcoming), time.Hour)
+	repo, _ := newRepo(t, live, upcoming)
+	c := newCache(t, repo, time.Hour)
 	require.NoError(t, c.Warm(context.Background()))
 
 	tests := []struct {
@@ -244,25 +260,11 @@ func TestBySlug_ReturnsWarmedConfig(t *testing.T) {
 	}
 }
 
-func TestByID_ReturnsWarmedConfig(t *testing.T) {
-	t.Parallel()
-
-	live := openPoll("final")
-	c := newCache(t, newFakeRepo(live), time.Hour)
-	require.NoError(t, c.Warm(context.Background()))
-
-	got, ok := c.ByID(live.ID)
-	require.True(t, ok)
-	assertMatchesPoll(t, live, got)
-
-	_, ok = c.ByID(uuid.New())
-	assert.False(t, ok, "неизвестный ID не имеет права вернуть чужой конфиг")
-}
-
 func TestBySlug_ColdCacheReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	c := newCache(t, newFakeRepo(openPoll("final")), time.Hour)
+	repo, _ := newRepo(t, openPoll("final"))
+	c := newCache(t, repo, time.Hour)
 
 	got, ok := c.BySlug("final")
 	assert.False(t, ok)
@@ -273,8 +275,8 @@ func TestBySlug_ColdCacheReturnsNotFound(t *testing.T) {
 func TestWarm_ErrorsWhenRepoFails(t *testing.T) {
 	t.Parallel()
 
-	repo := newFakeRepo(openPoll("final"))
-	repo.fail(errRepoDown)
+	repo, src := newRepo(t, openPoll("final"))
+	src.fail(errRepoDown)
 
 	c := newCache(t, repo, time.Hour)
 
@@ -289,12 +291,15 @@ func TestWarm_ErrorsWhenRepoFails(t *testing.T) {
 func TestWarm_TimesOutOnHangingRepo(t *testing.T) {
 	t.Parallel()
 
-	c := newCache(t, blockingRepo{}, time.Hour, pollcfg.WithRefreshTimeout(20*time.Millisecond))
+	c := newCache(t, newBlockingRepo(t), time.Hour)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
 
 	start := time.Now()
-	err := c.Warm(context.Background())
+	err := c.Warm(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, time.Since(start), time.Second, "таймаут запроса не сработал")
+	assert.Less(t, time.Since(start), time.Second, "зависший источник не имеет права держать старт инстанса")
 }
 
 func TestWarm_SkipsUnusablePolls(t *testing.T) {
@@ -305,12 +310,17 @@ func TestWarm_SkipsUnusablePolls(t *testing.T) {
 	noID.ID = uuid.Nil
 	good := openPoll("final")
 
-	c := newCache(t, newFakeRepo(nil, noSlug, noID, good), time.Hour)
+	repo, _ := newRepo(t, nil, noSlug, noID, good)
+	c := newCache(t, repo, time.Hour)
 	require.NoError(t, c.Warm(context.Background()))
 
 	got, ok := c.BySlug("final")
 	require.True(t, ok, "негодные строки не имеют права уронить прогрев целиком")
 	assertMatchesPoll(t, good, got)
+
+	byID, ok := c.ByID(good.ID)
+	require.True(t, ok, "консьюмер ищет конфиг по ID, а не по slug")
+	assert.Equal(t, got, byID)
 
 	_, ok = c.BySlug("")
 	assert.False(t, ok, "конфиг под пустым ключом ответил бы на запрос без slug")
@@ -323,7 +333,8 @@ func TestWarm_SnapshotDoesNotAliasPoll(t *testing.T) {
 	t.Parallel()
 
 	p := openPoll("final")
-	c := newCache(t, newFakeRepo(p), time.Hour)
+	repo, _ := newRepo(t, p)
+	c := newCache(t, repo, time.Hour)
 	require.NoError(t, c.Warm(context.Background()))
 
 	got, ok := c.BySlug("final")
@@ -340,12 +351,12 @@ func TestRun_PicksUpNewPoll(t *testing.T) {
 	t.Parallel()
 
 	live := openPoll("final")
-	repo := newFakeRepo(live)
+	repo, src := newRepo(t, live)
 	c := newCache(t, repo, 5*time.Millisecond)
 	require.NoError(t, c.Warm(context.Background()))
 
 	added := openPoll("halftime")
-	repo.serve(live, added)
+	src.serve(live, added)
 	runInBackground(t, c)
 
 	require.Eventually(t, func() bool {
@@ -365,11 +376,11 @@ func TestRun_DropsPollThatLeftActiveSet(t *testing.T) {
 	t.Parallel()
 
 	live, ended := openPoll("final"), openPoll("last-year")
-	repo := newFakeRepo(live, ended)
+	repo, src := newRepo(t, live, ended)
 	c := newCache(t, repo, 5*time.Millisecond)
 	require.NoError(t, c.Warm(context.Background()))
 
-	repo.serve(live)
+	src.serve(live)
 	runInBackground(t, c)
 
 	require.Eventually(t, func() bool {
@@ -385,7 +396,7 @@ func TestRun_KeepsStaleConfigWhenRepoFails(t *testing.T) {
 	t.Parallel()
 
 	live := openPoll("final")
-	repo := newFakeRepo(live)
+	repo, src := newRepo(t, live)
 	logs := &logCapture{}
 	c := newCache(t, repo, 5*time.Millisecond, pollcfg.WithLogger(logs.logger()))
 	require.NoError(t, c.Warm(context.Background()))
@@ -393,12 +404,12 @@ func TestRun_KeepsStaleConfigWhenRepoFails(t *testing.T) {
 	warmedAt := c.LastRefresh()
 	require.False(t, warmedAt.IsZero())
 
-	repo.fail(errRepoDown)
-	before := repo.callCount()
+	src.fail(errRepoDown)
+	before := src.callCount()
 	runInBackground(t, c)
 
 	require.Eventually(t, func() bool {
-		return repo.callCount() >= before+3
+		return src.callCount() >= before+3
 	}, 2*time.Second, 2*time.Millisecond, "рефрешер перестал ходить к источнику")
 
 	got, ok := c.BySlug("final")
@@ -415,16 +426,16 @@ func TestRun_ResumesAfterRepoRecovers(t *testing.T) {
 	t.Parallel()
 
 	live := openPoll("final")
-	repo := newFakeRepo(live)
+	repo, src := newRepo(t, live)
 	c := newCache(t, repo, 5*time.Millisecond)
 	require.NoError(t, c.Warm(context.Background()))
 
 	warmedAt := c.LastRefresh()
-	repo.fail(errRepoDown)
+	src.fail(errRepoDown)
 	runInBackground(t, c)
 
 	added := openPoll("halftime")
-	repo.serve(live, added)
+	src.serve(live, added)
 
 	require.Eventually(t, func() bool {
 		_, ok := c.BySlug("halftime")
@@ -437,11 +448,11 @@ func TestRun_ResumesAfterRepoRecovers(t *testing.T) {
 func TestPollCfg_NoIOOnHotPath(t *testing.T) {
 	t.Parallel()
 
-	repo := newFakeRepo(openPoll("final"))
+	repo, src := newRepo(t, openPoll("final"))
 	c := newCache(t, repo, time.Millisecond)
 	require.NoError(t, c.Warm(context.Background()))
 
-	afterWarm := repo.callCount()
+	afterWarm := src.callCount()
 	require.Equal(t, int64(1), afterWarm, "прогрев — единственное обращение к источнику")
 
 	time.Sleep(20 * time.Millisecond)
@@ -453,7 +464,7 @@ func TestPollCfg_NoIOOnHotPath(t *testing.T) {
 		_ = c.LastRefresh()
 	}
 
-	assert.Equal(t, afterWarm, repo.callCount(),
+	assert.Equal(t, afterWarm, src.callCount(),
 		"чтение конфига обязано ходить только в память: ни Postgres, ни сети на горячем пути")
 }
 
@@ -466,7 +477,7 @@ func TestCache_RaceFree(t *testing.T) {
 	)
 
 	stable := openPoll("final")
-	repo := newFakeRepo(stable)
+	repo, src := newRepo(t, stable)
 	c := newCache(t, repo, time.Millisecond)
 	require.NoError(t, c.Warm(context.Background()))
 	runInBackground(t, c)
@@ -475,7 +486,7 @@ func TestCache_RaceFree(t *testing.T) {
 	go func() {
 		defer close(churn)
 		for i := range 200 {
-			repo.serve(stable, openPoll(fmt.Sprintf("extra-%d", i)))
+			src.serve(stable, openPoll(fmt.Sprintf("extra-%d", i)))
 		}
 	}()
 
@@ -510,7 +521,8 @@ func TestWarm_WarnsAboutPollWithoutSalt(t *testing.T) {
 	t.Parallel()
 
 	logs := &logCapture{}
-	c := newCache(t, newFakeRepo(openPoll("final")), time.Hour, pollcfg.WithLogger(logs.logger()))
+	repo, _ := newRepo(t, openPoll("final"))
+	c := newCache(t, repo, time.Hour, pollcfg.WithLogger(logs.logger()))
 	require.NoError(t, c.Warm(context.Background()))
 
 	assert.True(t, logs.contains(slog.LevelWarn, "final"),
@@ -520,7 +532,8 @@ func TestWarm_WarnsAboutPollWithoutSalt(t *testing.T) {
 func TestRun_StopsOnContextCancel(t *testing.T) {
 	t.Parallel()
 
-	c := newCache(t, newFakeRepo(openPoll("final")), time.Millisecond)
+	repo, _ := newRepo(t, openPoll("final"))
+	c := newCache(t, repo, time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

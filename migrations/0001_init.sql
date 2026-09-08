@@ -14,7 +14,6 @@ CREATE TABLE polls (
     expected_audience             bigint           NOT NULL DEFAULT 0,
     expected_conversion           double precision NOT NULL DEFAULT 0.30,
     salt                          bytea            NOT NULL,
-    results_visible_during_voting boolean          NOT NULL DEFAULT false,
     version                       bigint           NOT NULL DEFAULT 1,
     created_at                    timestamptz      NOT NULL DEFAULT now(),
 
@@ -74,9 +73,6 @@ CREATE TABLE admin_audit (
 
     CONSTRAINT admin_audit_pkey PRIMARY KEY (id)
 );
-
-CREATE INDEX admin_audit_at_idx     ON admin_audit (at DESC, id DESC);
-CREATE INDEX admin_audit_entity_idx ON admin_audit (entity, at DESC);
 
 -- +goose Down
 
