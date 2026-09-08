@@ -12,7 +12,7 @@ help: ## показать эту справку
 # ─── стенд ────────────────────────────────────────────────────────────────
 .PHONY: demo
 demo: .env ## поднять всё, создать демо-опрос, напечатать ссылки
-	@$(COMPOSE) up -d --build
+	@$(COMPOSE) up -d --build --wait-timeout 300
 	@scripts/wait-ready.sh
 	@scripts/seed-demo.sh
 
@@ -67,7 +67,7 @@ smoke: ## end-to-end: дедуп проверяется между двумя и
 .PHONY: chaos
 chaos: ## сценарии отказов с проверкой корректности агрегата
 	@scripts/chaos/redis-master.sh
-	@scripts/chaos/app.sh
+	@scripts/chaos/consumer.sh
 	@scripts/chaos/postgres.sh
 
 .PHONY: load

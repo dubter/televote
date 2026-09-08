@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strings"
@@ -18,6 +19,32 @@ import (
 	"github.com/OWNER/televote/internal/observability"
 	"github.com/OWNER/televote/internal/storage/postgres"
 )
+
+// selfHealthcheck дёргает /readyz собственного процесса.
+//
+// Нужен, потому что образ distroless: ни curl, ни wget, ни shell в нём нет,
+// а healthcheck контейнера должен чем-то проверять готовность.
+func selfHealthcheck() int {
+	addr := os.Getenv("HTTP_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + addr + "/readyz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
 
 // pgxpoolWrapper прячет пул за узким интерфейсом: наружу нужны только
 // проверка готовности и закрытие.

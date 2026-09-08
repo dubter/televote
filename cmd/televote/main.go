@@ -28,10 +28,21 @@ var version = "dev"
 
 // roleFlag выбирает, что делает процесс: в проде приём и консьюмеры
 // масштабируются под разные графики нагрузки и живут в разных деплойментах.
-var roleFlag = flag.String("role", string(roleAll), "роль процесса: api | consumer | all")
+var (
+	roleFlag = flag.String("role", string(roleAll), "роль процесса: api | consumer | all")
+
+	// healthFlag превращает бинарь в собственный healthcheck: образ
+	// distroless, в нём нет ни shell, ни curl, и проверять готовность
+	// контейнера больше нечем.
+	healthFlag = flag.Bool("healthcheck", false, "проверить /readyz локального процесса и выйти")
+)
 
 func main() {
 	flag.Parse()
+
+	if *healthFlag {
+		os.Exit(selfHealthcheck())
+	}
 
 	if err := run(context.Background()); err != nil {
 		// Логгер к этому моменту может быть ещё не настроен — стандартного хватит,

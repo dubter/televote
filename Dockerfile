@@ -8,15 +8,17 @@ RUN go mod download
 
 COPY . .
 # Статический бинарь: distroless-образ ниже не содержит libc
-RUN CGO_ENABLED=0 GOOS=linux go build \
-      -trimpath \
-      -ldflags="-s -w -X main.version=$(git describe --tags --always 2>/dev/null || echo dev)" \
-      -o /out/televote ./cmd/televote
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+      -o /out/televote ./cmd/televote && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+      -o /out/migrate ./cmd/migrate
 
 # ─── рантайм ──────────────────────────────────────────────────────────────
 # distroless: без shell, без пакетного менеджера, минимум поверхности атаки
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/televote /televote
+COPY --from=build /out/migrate /migrate
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/televote"]

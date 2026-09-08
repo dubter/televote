@@ -222,8 +222,42 @@ func (a *app) buildAdmin() (*httpapi.AdminHandler, error) {
 		return nil, fmt.Errorf("сервис токенов: %w", err)
 	}
 
+	if err := a.bootstrapAdmin(admins); err != nil {
+		return nil, err
+	}
+
 	limiter := auth.NewLoginLimiter(5, time.Minute, 10_000)
 	return httpapi.NewAdminHandler(polls, results, admins, tokens, limiter, time.Now)
+}
+
+// bootstrapAdmin заводит первую учётную запись, если её ещё нет.
+//
+// Без этого свежий стенд некому открыть: админка требует токена, а токен
+// выдаётся только существующему пользователю. В production конфиг уже
+// потребовал непустой пароль, поэтому дефолт сюда не доедет.
+func (a *app) bootstrapAdmin(admins *postgres.AdminRepo) error {
+	if a.cfg.AdminBootstrapLogin == "" || a.cfg.AdminBootstrapPassword == "" {
+		return nil
+	}
+
+	hash, err := auth.HashPassword(a.cfg.AdminBootstrapPassword)
+	if err != nil {
+		return fmt.Errorf("хэш пароля администратора: %w", err)
+	}
+
+	created, err := admins.EnsureAdmin(context.Background(), postgres.Admin{
+		Login:        a.cfg.AdminBootstrapLogin,
+		PasswordHash: hash,
+		Role:         string(auth.RoleAdmin),
+	})
+	if err != nil {
+		return fmt.Errorf("создание администратора: %w", err)
+	}
+	if created {
+		a.log.Info("создана учётная запись администратора",
+			slog.String("login", a.cfg.AdminBootstrapLogin))
+	}
+	return nil
 }
 
 // runBackground поднимает фоновые задачи роли.
