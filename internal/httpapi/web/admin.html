@@ -1,0 +1,146 @@
+<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Televote — админка</title>
+<style>
+:root{--bg:#0f1419;--card:#1a2027;--fg:#e8eaed;--dim:#9aa4b0;--accent:#ffb020;--ok:#4caf7d;--line:#2a323c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,sans-serif}
+.wrap{max-width:900px;margin:0 auto;padding:24px 16px}
+h1{font-size:20px;margin:0 0 20px}h2{font-size:16px;margin:28px 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+input,select,textarea{width:100%;padding:10px;margin:4px 0 12px;background:#12171d;color:var(--fg);
+border:1px solid var(--line);border-radius:8px;font:inherit}
+label{font-size:13px;color:var(--dim)}
+button{padding:10px 16px;background:var(--accent);color:#12161a;border:0;border-radius:8px;
+font:inherit;font-weight:600;cursor:pointer;margin-right:8px}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line);font-weight:400}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;color:var(--dim);font-weight:500;font-size:12px;text-transform:uppercase;
+padding:8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--accent);border-radius:3px;min-width:2px}
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;background:#22303c}
+.err{color:#e8776c}.ok{color:var(--ok)}.dim{color:var(--dim)}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>*{flex:1;min-width:180px}
+</style></head><body><div class="wrap" id="app">Загрузка…</div>
+<script>
+(()=>{"use strict";
+const app=document.getElementById("app");
+const api="/api/v1/admin";
+let token=sessionStorage.getItem("t")||"",polls=[],timer=null;
+
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const iso=d=>new Date(d).toISOString().slice(0,16);
+
+async function call(path,opts){
+  const o=opts||{};o.headers=Object.assign({"Content-Type":"application/json"},o.headers||{});
+  if(token)o.headers.Authorization="Bearer "+token;
+  const r=await fetch(api+path,o);
+  if(r.status===401){token="";sessionStorage.removeItem("t");login();throw new Error("нужен вход")}
+  const body=r.status===204?null:await r.json().catch(()=>null);
+  if(!r.ok)throw new Error(body&&body.error?body.error:"ошибка "+r.status);
+  return body;
+}
+
+function login(msg){
+  clearInterval(timer);
+  app.innerHTML='<h1>Televote</h1><div class="card"><label>Логин</label><input id="l" value="admin">'+
+    '<label>Пароль</label><input id="p" type="password"><button id="go">Войти</button>'+
+    (msg?'<div class="err">'+esc(msg)+"</div>":"")+"</div>";
+  document.getElementById("go").onclick=async()=>{
+    try{
+      const r=await fetch(api+"/login",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({login:document.getElementById("l").value,password:document.getElementById("p").value})});
+      if(!r.ok)return login("Неверный логин или пароль");
+      const b=await r.json();token=b.token;sessionStorage.setItem("t",token);dashboard();
+    }catch(e){login("Сервер недоступен")}
+  };
+}
+
+async function dashboard(){
+  try{polls=await call("/polls")}catch(e){return}
+  app.innerHTML='<h1>Televote</h1>'+
+    '<div class="card"><h2 style="margin-top:0">Новый опрос</h2>'+
+      '<div class="row"><div><label>Slug</label><input id="f-slug" placeholder="final"></div>'+
+      '<div><label>Тип</label><select id="f-type"><option value="single">один вариант</option>'+
+      '<option value="multiple">несколько</option></select></div></div>'+
+      '<label>Вопрос</label><input id="f-q" placeholder="Кто победит в финале?">'+
+      '<label>Варианты, по одному в строке</label><textarea id="f-o" rows="4">первый&#10;второй&#10;третий</textarea>'+
+      '<div class="row"><div><label>Открыть</label><input id="f-open" type="datetime-local"></div>'+
+      '<div><label>Закрыть</label><input id="f-close" type="datetime-local"></div></div>'+
+      '<div class="row"><div><label>Ожидаемая аудитория</label><input id="f-aud" type="number" value="100000000"></div>'+
+      '<div><label>Ожидаемая конверсия</label><input id="f-conv" type="number" step="0.01" value="0.3"></div></div>'+
+      '<button id="create">Создать</button><span id="cmsg" class="dim"></span></div>'+
+    '<h2>Опросы</h2><div id="list"></div>';
+
+  // Опрос обязан открываться не раньше чем через час: ёмкость под эфир
+  // поднимается по расписанию, и раньше она просто не успеет.
+  const t=new Date(Date.now()+3660e3);
+  document.getElementById("f-open").value=iso(t);
+  document.getElementById("f-close").value=iso(new Date(t.getTime()+60e3));
+  document.getElementById("create").onclick=create;
+  renderList();
+  clearInterval(timer);timer=setInterval(refresh,5000);
+}
+
+async function create(){
+  const msg=document.getElementById("cmsg");msg.textContent="";msg.className="dim";
+  const v=id=>document.getElementById(id).value;
+  try{
+    await call("/polls",{method:"POST",body:JSON.stringify({
+      slug:v("f-slug"),question:v("f-q"),type:v("f-type"),
+      options:v("f-o").split("\n").map(s=>s.trim()).filter(Boolean),
+      min_choices:1,max_choices:v("f-type")==="multiple"?2:1,
+      opens_at:new Date(v("f-open")).toISOString(),
+      closes_at:new Date(v("f-close")).toISOString(),
+      expected_audience:+v("f-aud"),expected_conversion:+v("f-conv")
+    })});
+    msg.textContent="создан";msg.className="ok";refresh();
+  }catch(e){msg.textContent=e.message;msg.className="err"}
+}
+
+async function refresh(){
+  try{polls=await call("/polls");renderList()}catch(e){}
+}
+
+function renderList(){
+  const list=document.getElementById("list");
+  if(!list)return;
+  if(!polls.length){list.innerHTML='<div class="card dim">Активных опросов нет</div>';return}
+  list.innerHTML=polls.map(p=>
+    '<div class="card"><div class="row"><div><b>'+esc(p.question)+"</b> "+
+    '<span class="pill">'+esc(p.status)+"</span><br>"+
+    '<span class="dim">/p/'+esc(p.slug)+" · "+esc(p.opens_at)+" → "+esc(p.closes_at)+"</span></div>"+
+    '<div style="flex:0 0 auto">'+
+      '<button class="ghost" data-open="'+esc(p.slug)+'">Открыть</button>'+
+      '<button class="ghost" data-close="'+esc(p.slug)+'">Закрыть</button>'+
+      '<button class="ghost" data-res="'+esc(p.slug)+'">Результаты</button>'+
+    "</div></div><div id=\"r-"+esc(p.slug)+'"></div></div>').join("");
+
+  list.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>act(b.dataset.open,"open"));
+  list.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>act(b.dataset.close,"close"));
+  list.querySelectorAll("[data-res]").forEach(b=>b.onclick=()=>results(b.dataset.res));
+}
+
+async function act(slug,what){
+  try{await call("/polls/"+encodeURIComponent(slug)+"/"+what,{method:"POST"});refresh()}
+  catch(e){alert(e.message)}
+}
+
+async function results(slug){
+  const box=document.getElementById("r-"+slug);
+  try{
+    const r=await call("/polls/"+encodeURIComponent(slug)+"/results");
+    const max=Math.max(1,...r.options.map(o=>o.votes));
+    box.innerHTML='<table><tr><th>Вариант</th><th>Голосов</th><th>%</th><th></th></tr>'+
+      r.options.map(o=>"<tr><td>"+esc(o.text)+"</td><td>"+o.votes+"</td><td>"+
+        o.percent.toFixed(1)+'</td><td><div class="bar" style="width:'+
+        (o.votes/max*100).toFixed(1)+'%"></div></td></tr>').join("")+
+      "</table><div class=\"dim\" style=\"margin-top:8px\">бюллетеней: "+r.ballots+" · "+
+      (r.final?"итоговый результат":"подсчёт идёт, цифры ещё растут")+"</div>";
+  }catch(e){box.innerHTML='<div class="err">'+esc(e.message)+"</div>"}
+}
+
+token?dashboard():login();
+})();
+</script></body></html>
