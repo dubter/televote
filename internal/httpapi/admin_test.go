@@ -376,8 +376,8 @@ func TestFR5_ClosedPollReturnsAdjustedResult(t *testing.T) {
 		Options: []domain.Option{{Idx: 0, Text: "а"}},
 	}
 	results := &fakeResults{
-		agg:      domain.Aggregate{Votes: map[uint8]int64{0: 500}, Ballots: 500},
-		adjusted: domain.Aggregate{Votes: map[uint8]int64{0: 460}, Ballots: 460},
+		agg:      domain.NewAggregateFrom(map[uint8]int64{0: 500}, 500),
+		adjusted: domain.NewAggregateFrom(map[uint8]int64{0: 460}, 460),
 		excluded: []string{"203.0.0.0/16"},
 	}
 	f := newAdminFixture(t, auth.RoleViewer, newFakePolls(poll), results)

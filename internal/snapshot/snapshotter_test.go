@@ -40,7 +40,7 @@ func (f *fakeAgg) Aggregate(context.Context, uuid.UUID, uint16) (domain.Aggregat
 func (f *fakeAgg) set(votes map[uint8]int64, ballots int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.agg = domain.Aggregate{Votes: votes, Ballots: ballots}
+	f.agg = domain.NewAggregateFrom(votes, ballots)
 }
 
 type fakeResults struct {

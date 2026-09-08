@@ -137,7 +137,7 @@ func (c *Caster) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uin
 		cmds = append(cmds, c.client.B().Hgetall().Key(CounterKey(pollID, shard)).Build())
 	}
 
-	out := domain.Aggregate{Votes: make(map[uint8]int64)}
+	out := domain.NewAggregate()
 	for _, resp := range c.client.DoMulti(ctx, cmds...) {
 		fields, err := resp.AsStrMap()
 		if err != nil {

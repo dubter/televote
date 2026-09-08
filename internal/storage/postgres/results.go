@@ -171,9 +171,6 @@ func (r *ResultRepo) GetAdjusted(
 		return domain.Aggregate{}, nil, fmt.Errorf(
 			"postgres: чтение публикуемого результата опроса %s: %w", pollID, err)
 	}
-	if agg.Votes == nil {
-		agg.Votes = make(map[uint8]int64)
-	}
 	if nets == nil {
 		nets = []string{}
 	}
@@ -183,7 +180,7 @@ func (r *ResultRepo) GetAdjusted(
 func (r *ResultRepo) aggregate(
 	ctx context.Context, pollID uuid.UUID, resultsTable, statsTable string,
 ) (domain.Aggregate, error) {
-	agg := domain.Aggregate{Votes: make(map[uint8]int64)}
+	agg := domain.NewAggregate()
 
 	err := pgx.BeginTxFunc(ctx, r.db,
 		pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly},

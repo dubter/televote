@@ -172,10 +172,10 @@ func TestUpsert_IsMonotonic(t *testing.T) {
 	require.NoError(t, polls.Create(ctx, p))
 
 	require.NoError(t, results.Upsert(ctx, p.ID,
-		domain.Aggregate{Votes: map[uint8]int64{0: 1000, 1: 500}, Ballots: 1500}))
+		domain.NewAggregateFrom(map[uint8]int64{0: 1000, 1: 500}, 1500)))
 
 	require.NoError(t, results.Upsert(ctx, p.ID,
-		domain.Aggregate{Votes: map[uint8]int64{0: 900, 1: 600}, Ballots: 1490}))
+		domain.NewAggregateFrom(map[uint8]int64{0: 900, 1: 600}, 1490)))
 
 	got, err := results.Get(ctx, p.ID)
 	require.NoError(t, err)
@@ -221,10 +221,10 @@ func TestSaveAdjusted_DoesNotTouchRawResults(t *testing.T) {
 	p := newPoll("final")
 	require.NoError(t, polls.Create(ctx, p))
 	require.NoError(t, results.Upsert(ctx, p.ID,
-		domain.Aggregate{Votes: map[uint8]int64{0: 500}, Ballots: 500}))
+		domain.NewAggregateFrom(map[uint8]int64{0: 500}, 500)))
 
 	require.NoError(t, results.SaveAdjusted(ctx, p.ID,
-		domain.Aggregate{Votes: map[uint8]int64{0: 460}, Ballots: 460}, []string{"203.0.0.0/16"}))
+		domain.NewAggregateFrom(map[uint8]int64{0: 460}, 460), []string{"203.0.0.0/16"}))
 
 	raw, err := results.Get(ctx, p.ID)
 	require.NoError(t, err)
