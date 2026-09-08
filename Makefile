@@ -73,7 +73,9 @@ chaos: ## сценарии отказов с проверкой корректн
 
 .PHONY: load
 load: ## k6: стоимость одного голоса + сверка суммы счётчиков
-	@$(COMPOSE) --profile load run --rm k6 run /scripts/vote.js
+	@$(COMPOSE) --profile load run --rm \
+	  -e BASE_URL=http://lb:8080 -e PEAK_RPS=$${PEAK_RPS:-500} \
+	  k6 run /scripts/vote.js
 
 # ─── спецификация ─────────────────────────────────────────────────────────
 .PHONY: verify-requirements

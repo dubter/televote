@@ -21,6 +21,11 @@ x-app-env: &app-env
   POSTGRES_READ_DSN: postgres://televote:televote@postgres:5432/televote?sslmode=disable
   PUBLIC_BASE_URL: http://localhost:${APP_PORT:-8080}
   ASN_BLOCK_ENABLED: "false"
+  # На стенде весь трафик приходит из одной docker-сети, то есть с одного-двух
+  # адресов. Продовый порог отверг бы нагрузочный тест целиком, и тест померил
+  # бы лимитер вместо сервиса. В проде значение обратное: порог рассчитан на
+  # CGNAT, за которым сидят сотни тысяч живых зрителей.
+  RATE_LIMIT_PER_MIN: "10000000"
   SNAPSHOT_INTERVAL: 2s
   SNAPSHOT_FINAL_GRACE: 5s
   POLL_CONFIG_REFRESH: 1s

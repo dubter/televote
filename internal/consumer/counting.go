@@ -59,6 +59,14 @@ type Counting struct {
 	// retryBudget ограничивает попытки применить одно сообщение. Ретраить
 	// бесконечно нельзя: партиция встанет и дренаж не закончится никогда.
 	retryBudget time.Duration
+
+	// lookupBudget — сколько ждать появления конфига опроса в кэше.
+	//
+	// Приём и подсчёт живут в разных процессах с независимыми кэшами. Голос
+	// принят инстансом, который про опрос уже знал, а консьюмер мог ещё не
+	// обновиться — и без ожидания сообщение было бы отброшено навсегда,
+	// вместе с закоммиченным оффсетом. Это тихая потеря голоса.
+	lookupBudget time.Duration
 }
 
 // NewCounting собирает консьюмер подсчёта.
@@ -75,12 +83,13 @@ func NewCounting(client *kgo.Client, applier Applier, lookup ConfigLookup, obs O
 		log = slog.Default()
 	}
 	return &Counting{
-		client:      client,
-		applier:     applier,
-		lookup:      lookup,
-		obs:         obs,
-		log:         log,
-		retryBudget: 30 * time.Second,
+		client:       client,
+		applier:      applier,
+		lookup:       lookup,
+		obs:          obs,
+		log:          log,
+		retryBudget:  30 * time.Second,
+		lookupBudget: 10 * time.Second,
 	}, nil
 }
 
@@ -126,7 +135,7 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 
-	cfg, ok := c.lookup.ByID(msg.PollID)
+	cfg, ok := c.awaitConfig(ctx, msg.PollID)
 	if !ok {
 		c.reject(ctx, reasonUnknownPoll, fmt.Errorf("опрос %s не найден", msg.PollID))
 		return
@@ -155,6 +164,35 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	if c.obs != nil {
 		c.obs.VoteCounted(ctx, res)
 	}
+}
+
+// awaitConfig ждёт появления конфига опроса в кэше.
+//
+// Промах здесь почти всегда означает не «такого опроса нет», а «кэш этого
+// процесса ещё не обновился»: рефрешер ходит в Postgres раз в несколько
+// секунд, а голос за только что открытый опрос приходит сразу. Отбросить
+// сообщение в этот момент — значит потерять голос навсегда, потому что
+// оффсет будет закоммичен.
+//
+// Бюджет ограничен: если опроса нет и после ожидания, это действительно
+// чужое сообщение, и держать из-за него партицию нельзя.
+func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.HotConfig, bool) {
+	if cfg, ok := c.lookup.ByID(pollID); ok {
+		return cfg, true
+	}
+
+	deadline := time.Now().Add(c.lookupBudget)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(250 * time.Millisecond):
+		}
+		if cfg, ok := c.lookup.ByID(pollID); ok {
+			return cfg, true
+		}
+	}
+	return nil, false
 }
 
 // applyWithRetry повторяет применение, пока ошибка транзиентна и есть бюджет.

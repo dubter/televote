@@ -135,11 +135,12 @@ func newCounting(t *testing.T, applier Applier, cfg *pollcfg.HotConfig, obs Obse
 	t.Helper()
 
 	c := &Counting{
-		applier:     applier,
-		lookup:      fakeLookup{cfg.ID: cfg},
-		obs:         obs,
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		retryBudget: 2 * time.Second,
+		applier:      applier,
+		lookup:       fakeLookup{cfg.ID: cfg},
+		obs:          obs,
+		log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		retryBudget:  2 * time.Second,
+		lookupBudget: 300 * time.Millisecond,
 	}
 	return c
 }
@@ -297,4 +298,64 @@ func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 	_, _, calls := applier.snapshot()
 	assert.Equal(t, 1, calls, "постоянная ошибка не ретраится")
 	assert.Less(t, time.Since(start), time.Second)
+}
+
+// lateLookup узнаёт про опрос не сразу — так выглядит консьюмер, чей кэш
+// конфигов ещё не обновился после создания опроса.
+type lateLookup struct {
+	mu      sync.Mutex
+	cfg     *pollcfg.HotConfig
+	after   int
+	queries int
+}
+
+func (l *lateLookup) ByID(id uuid.UUID) (*pollcfg.HotConfig, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.queries++
+	if l.queries <= l.after || l.cfg.ID != id {
+		return nil, false
+	}
+	return l.cfg, true
+}
+
+// Приём и подсчёт живут в разных процессах с независимыми кэшами конфигов.
+// Голос принят инстансом, который про опрос уже знал, а консьюмер мог ещё не
+// обновиться. Отбросить сообщение в этот момент — потерять голос навсегда:
+// оффсет будет закоммичен, и переиграть его уже нечем.
+func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	applier := newFakeApplier()
+	obs := &recordingObserver{}
+
+	c := newCounting(t, applier, cfg, obs)
+	c.lookup = &lateLookup{cfg: cfg, after: 2} // кэш обновится с третьего запроса
+
+	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+
+	_, ballots, _ := applier.snapshot()
+	assert.EqualValues(t, 1, ballots, "голос отброшен из-за неуспевшего кэша конфигов")
+	assert.Empty(t, obs.reasons())
+}
+
+// Ждать бесконечно нельзя: чужое сообщение держало бы партицию, и дренаж
+// не закончился бы никогда.
+func TestCounting_GivesUpOnGenuinelyUnknownPoll(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig(t)
+	applier := newFakeApplier()
+	obs := &recordingObserver{}
+
+	c := newCounting(t, applier, cfg, obs)
+	c.lookup = fakeLookup{} // опроса нет и не появится
+
+	start := time.Now()
+	c.applyRecord(context.Background(), record(t, cfg, "voter-1", []uint8{1}, opensAt.Add(time.Second)))
+
+	assert.Equal(t, []string{reasonUnknownPoll}, obs.reasons())
+	assert.Less(t, time.Since(start), 2*time.Second, "консьюмер завис на чужом сообщении")
 }
