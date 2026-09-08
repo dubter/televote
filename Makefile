@@ -66,7 +66,7 @@ smoke: ## end-to-end: дедуп проверяется между двумя и
 	@scripts/smoke.sh
 
 .PHONY: chaos
-chaos: ## сценарии отказов с проверкой корректности агрегата
+chaos: ## сценарии отказов; каждый заканчивается сверкой агрегата
 	@scripts/chaos/redis-master.sh
 	@scripts/chaos/consumer.sh
 	@scripts/chaos/postgres.sh
