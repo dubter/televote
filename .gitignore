@@ -8,7 +8,7 @@
 # Сборка
 /bin/
 /dist/
-televote
+/televote
 
 # Go
 *.test
