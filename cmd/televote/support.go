@@ -153,11 +153,6 @@ func (a *app) datacenterRanges() []netip.Prefix {
 }
 
 // adminJWTBytes превращает ключ из конфига в байты подписи.
-//
-// В production конфиг уже потребовал полноценный секрет. В dev значение из
-// .env.example — плейсхолдер, и вместо отказа стартовать оно сворачивается в
-// детерминированный ключ: `make demo` обязан работать без ручной генерации,
-// а два инстанса на одном .env — принимать токены друг друга.
 func adminJWTBytes(raw string) []byte {
 	if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) >= 32 {
 		return decoded

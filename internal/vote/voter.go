@@ -68,10 +68,6 @@ var constantClientIDs = map[string]struct{}{
 
 // DeriveVoterID выводит идентификатор голосующего из соли опроса и значения,
 // присланного клиентом.
-//
-// Клиент присылает вход, ключ выводит сервер: длина ключа фиксирована, чужой
-// ключ не занять без соли, между опросами идентификаторы несвязуемы.
-// Детерминирована — на этом держится идемпотентность применения голоса.
 func DeriveVoterID(salt []byte, clientID string) (VoterID, error) {
 	if len(salt) < minSaltLen {
 		return VoterID{}, fmt.Errorf("%w: длина %d, минимум %d", ErrBadSalt, len(salt), minSaltLen)

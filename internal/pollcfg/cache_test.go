@@ -26,10 +26,6 @@ var errRepoDown = errors.New("postgres лежит")
 
 // fakeRepo — источник конфига без Postgres: реализация того же узкого
 // интерфейса, что и storage/postgres.PollRepo.
-//
-// Мьютекс здесь не про производительность. Рефрешер читает из своей горутины,
-// а тест подменяет ответ из своей, и без синхронизации -race поймал бы сам
-// тест, а не проверяемый код.
 type fakeRepo struct {
 	mu    sync.Mutex
 	polls []*domain.Poll
@@ -192,12 +188,6 @@ func runInBackground(t *testing.T, c *pollcfg.Cache) {
 }
 
 // assertMatchesPoll сверяет конфиг с опросом целиком.
-//
-// Rules и Window сравниваются с результатом доменных методов, а не с
-// переписанными в тесте значениями: копия правил валидации в кэше разъехалась
-// бы с доменной молча, и расхождение всплыло бы на разборе результатов эфира.
-//
-// Salt не сверяется: domain.Poll его пока не несёт (см. notes задачи T5).
 func assertMatchesPoll(t *testing.T, want *domain.Poll, got *pollcfg.HotConfig) {
 	t.Helper()
 
@@ -482,10 +472,6 @@ func TestRun_ResumesAfterRepoRecovers(t *testing.T) {
 // Инвариант из CLAUDE.md: конфиг опроса — фоновый рефрешер, а не ленивый TTL.
 // Истечение TTL при 2M RPS дало бы thundering herd из тысяч одновременных
 // промахов в Postgres, который на горячем пути вообще не должен появляться.
-//
-// Тест ждёт заведомо дольше интервала обновления и НЕ поднимает рефрешер:
-// реализация с ленивым TTL пошла бы к источнику на первом же чтении после
-// истечения, и счётчик обращений вырос бы.
 func TestPollCfg_NoIOOnHotPath(t *testing.T) {
 	t.Parallel()
 

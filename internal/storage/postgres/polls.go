@@ -62,18 +62,10 @@ const (
 	// predPollUpcoming: горизонт задаётся в секундах через make_interval, а не
 	// приведением к interval. Кодировать time.Duration в тип Postgres по пути
 	// незачем — секунды однозначны в обе стороны.
-	//
-	// Нижней границы намеренно нет: scheduled с уже прошедшим opens_at — это
-	// просрочивший открытие опрос, и он нужен вызывающему в первую очередь.
 	predPollUpcoming = `p.status = 'scheduled' AND p.opens_at <= now() + make_interval(secs => $1)`
 )
 
 // Create создаёт опрос со всеми полями control plane.
-//
-// Соль всегда генерируется заново и переданное значение row.Salt игнорируется:
-// принимать соль извне — значит позволить вызывающему подать слабую или общую.
-// Сгенерированное значение записывается в row.Salt, чтобы вызывающий увидел его
-// без повторного чтения из базы.
 func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 	if row == nil {
 		return errors.New("postgres: CreateRow без опроса")
@@ -154,13 +146,6 @@ func (r *PollRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Poll, err
 }
 
 // ListActive возвращает опросы, которые могут получить голоса: scheduled и open.
-//
-// Оба статуса, а не только open: приём должен знать конфигурацию опроса ещё до
-// открытия, иначе первые голоса после перехода получат «неизвестный опрос»,
-// пока рефрешер не сходит в базу.
-// Это запрос фонового рефрешера конфига: он ходит раз в 2 с с каждого инстанса,
-// и предикат совпадает с частичным индексом, чтобы стоимость была O(активных
-// опросов), а не O(архива).
 func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
 	return r.many(ctx, predPollActive)
 }
@@ -177,12 +162,6 @@ func (r *PollRepo) ListUpcoming(ctx context.Context, within time.Duration) ([]*d
 }
 
 // Transition переводит опрос в статус to при совпадении версии.
-//
-// Проверка версии — не удобство, а защита от гонки двух админов: без неё
-// «закрыть» от одного затирает «продлить» от другого, и опрос закрывается в
-// эфире. Законность самого перехода проверяет домен (domain.Status.CanTransitionTo)
-// на стороне вызывающего: правило принадлежит домену, и дублировать его в SQL
-// значит завести вторую копию, которая разъедется.
 func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error {
 	if !to.Valid() {
 		return fmt.Errorf("postgres: неизвестный статус %q: %w", to, domain.ErrBadTransition)
@@ -215,14 +194,6 @@ func (r *PollRepo) Transition(ctx context.Context, id uuid.UUID, to domain.Statu
 }
 
 // HasCountedVotes сообщает, есть ли у опроса уже посчитанные голоса.
-//
-// Нужно для запрета правки опций: изменить текст варианта после первого голоса —
-// значит переписать смысл уже поданных бюллетеней.
-//
-// Проверяются обе таблицы состояния подсчёта. Бюллетени учитываются отдельно от
-// голосов, потому что снапшот с ненулевым ballots_total и пустыми счётчиками —
-// это реальное промежуточное состояние: голоса уже поданы, а разложить их по
-// опциям снапшотер ещё не успел.
 func (r *PollRepo) HasCountedVotes(ctx context.Context, id uuid.UUID) (bool, error) {
 	const q = `
 		SELECT EXISTS (SELECT 1 FROM poll_results WHERE poll_id = $1 AND votes > 0)
@@ -248,11 +219,6 @@ func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.P
 }
 
 // many читает опросы по предикату и подшивает к ним опции.
-//
-// Два запроса вместо соединения: соединение размножило бы поля опроса по числу
-// опций, и разбор всё равно свёлся бы к группировке. Опции выбираются подзапросом
-// с тем же предикатом, а не по списку собранных id, чтобы не кодировать массив
-// uuid и не терять опции опроса, созданного между двумя запросами.
 func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domain.Poll, error) {
 	// Порядок детерминирован: вызывающие сравнивают срезы, а произвольный
 	// порядок строк из Postgres сделал бы такие сравнения флаки.
@@ -318,11 +284,6 @@ func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domai
 }
 
 // scanPollRow разбирает строку в PollRow.
-//
-// Все узкие поля читаются в широкий тип Postgres и сужаются с проверкой границ.
-// Прямое приведение int16 → uint8 на порченой строке дало бы другой индекс
-// опции без единой ошибки — ровно тот класс поломок, который в этом проекте
-// ловится тестом, а не логом.
 func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	var (
 		row        domain.Poll

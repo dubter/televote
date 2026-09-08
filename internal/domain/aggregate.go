@@ -44,10 +44,6 @@ func (a Aggregate) Merge(other Aggregate) Aggregate {
 
 // MergeMax берёт поэлементный максимум — единственное место, где обеспечивается
 // монотонность результата.
-//
-// Redis теряет часть данных при failover и поднимается с меньшими счётчиками;
-// без максимума цифра в админке уменьшилась бы на глазах. Идемпотентна,
-// поэтому дубль тика снапшотера безвреден.
 func (a Aggregate) MergeMax(prev Aggregate) Aggregate {
 	out := Aggregate{
 		Votes:   make(map[uint8]int64, len(a.Votes)+len(prev.Votes)),

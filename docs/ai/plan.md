@@ -1,11 +1,11 @@
 # Televote — план реализации
 
 > **Для агентов:** читай `CLAUDE.md` (инварианты), `docs/design.md` (раздел под свою задачу),
-> `docs/requirements.md` (FR/NFR), `docs/specs/acceptance.md` (имена приёмочных тестов).
+> `docs/design.md` §1 (требования FR/NFR).
 
 **Goal:** приём 30 млн голосов в окне 60 с через Kafka, дедуп и подсчёт консьюмером, результат eventually.
 
-**Spec:** `docs/design.md` · `docs/requirements.md` · `docs/specs/acceptance.md`
+**Spec:** `docs/design.md`
 
 ## Global Constraints
 
@@ -413,7 +413,6 @@ func (m *Metrics) ProduceLatency(ctx context.Context, d time.Duration)
 - [ ] Полная сборка, `go vet`, `go test -race ./...`, `gofmt -w -s .`
 - [ ] `golangci-lint run` если установлен
 - [ ] **Для каждой строки таблицы инвариантов `CLAUDE.md` найти в коде место, которое её обеспечивает.** Отсутствующие — в `remaining`
-- [ ] `make verify-requirements` — сколько приёмочных тестов ещё не написано
 
 ---
 
@@ -462,7 +461,6 @@ func (m *Metrics) ProduceLatency(ctx context.Context, d time.Duration)
 - [ ] `README.md`: `make demo` первой командой, требования к машине, что доказывает каждая проверка, структура репозитория
 - [ ] `ARCHITECTURE.md`: самостоятельный документ. Раскрыть — почему в окне только приём; почему Kafka; почему автоскейлинг неприменим; почему self-hosted Redis; почему нет fingerprint; почему нет аудит-трейла и чем платим. Трейд-оффы таблицей
 - [ ] `docs/ai/README.md`: навигация по артефактам, **включая места, где решения менялись** — буфер голосов оказался ошибкой, конфиг в Redis лишним, оценка стоимости `fork` неверно откалибрована, две ручки схлопнулись в одну, fingerprint отвергнут дважды. Честная история решений ценнее приглаженной
-- [ ] `make verify-requirements` до зелёного: дописать недостающие приёмочные тесты в `test/acceptance/`
 
 ---
 

@@ -27,13 +27,6 @@ func (p *Poll) ValidateChoices(choices []uint8) error {
 }
 
 // Validate проверяет набор выбранных индексов.
-//
-// single принимает ровно один вариант; multiple — от MinChoices до MaxChoices,
-// нулевой MaxChoices означает отсутствие потолка. Пустой набор отвергается
-// всегда: «воздержался» — это отдельная опция, а не отсутствие голоса.
-// Дубль индекса отвергается даже при верном размере набора.
-//
-// Входной срез не изменяется.
 func (r ChoiceRules) Validate(choices []uint8) error {
 	if len(choices) == 0 {
 		return ErrInvalidChoices
@@ -92,11 +85,6 @@ func (p *Poll) IsOpenAt(t time.Time) bool {
 }
 
 // IsOpenAt сообщает, принимает ли окно голоса в момент t.
-//
-// Границы несимметричны: OpensAt включается, ClosesAt исключается — иначе окно
-// длилось бы на наносекунду дольше заявленного. Незаданный ClosesAt означает
-// незаполненный конфиг, а не «голосуем вечно». Статус проверяется отдельно
-// от дат: опрос может быть внутри окна и при этом закрыт вручную.
 func (w Window) IsOpenAt(t time.Time) bool {
 	if w.Status != StatusOpen || w.ClosesAt.IsZero() {
 		return false

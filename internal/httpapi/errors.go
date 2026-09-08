@@ -32,11 +32,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 }
 
 // WriteError — ЕДИНСТВЕННАЯ точка перевода доменных ошибок в HTTP-коды.
-//
-// Единственная не из эстетики: именно она гарантирует, что одна и та же
-// ошибка вернёт один и тот же код из любого хендлера. Разложи маппинг по
-// обработчикам — и написанный последним ответит иначе, а заметят это уже
-// в эфире.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := classify(err)
 

@@ -45,11 +45,6 @@ type health struct {
 }
 
 // Handler отдаёт http.Handler с /livez и /readyz.
-//
-// Разделение принципиальное: liveness отвечает на вопрос «процесс жив»,
-// readiness — «можно слать трафик». Если повесить проверку Redis на liveness,
-// падение Redis приведёт к перезапуску всех подов разом — ровно в тот момент,
-// когда они нужнее всего.
 func Handler(live, ready []Checker, opts ...Option) http.Handler {
 	h := &health{live: live, ready: ready, timeout: defaultCheckTimeout}
 	for _, opt := range opts {
