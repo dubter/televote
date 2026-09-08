@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ const (
 	reasonUnknownPoll = "unknown_poll"
 	reasonOutOfWindow = "out_of_window"
 	reasonBadVoterID  = "bad_voter_id"
+	reasonApplyFailed = "apply_failed"
 )
 
 type Counting struct {
@@ -53,6 +55,7 @@ type Counting struct {
 	retryBudget  time.Duration
 	lookupBudget time.Duration
 	breaker      *gobreaker.CircuitBreaker[vote.Result]
+	workers      int
 	tracer       trace.Tracer
 }
 
@@ -61,6 +64,7 @@ type Config struct {
 	LookupBudget  time.Duration
 	ErrorRatio    float64
 	BreakerWindow time.Duration
+	Workers       int
 }
 
 func NewCounting(
@@ -100,6 +104,9 @@ func newCounting(applier Applier, lookup ConfigLookup, obs Observer, log *slog.L
 	if cfg.BreakerWindow <= 0 {
 		cfg.BreakerWindow = defaultBreakerWindow
 	}
+	if cfg.Workers <= 0 {
+		cfg.Workers = defaultWorkers
+	}
 
 	return &Counting{
 		applier:      applier,
@@ -109,6 +116,7 @@ func newCounting(applier Applier, lookup ConfigLookup, obs Observer, log *slog.L
 		retryBudget:  cfg.RetryBudget,
 		lookupBudget: cfg.LookupBudget,
 		breaker:      newBreaker(cfg, log, obs),
+		workers:      cfg.Workers,
 		tracer:       otel.Tracer("televote/consumer"),
 	}
 }
@@ -121,6 +129,7 @@ const (
 	initialApplyBackoff  = 20 * time.Millisecond
 	maxApplyBackoff      = 2 * time.Second
 	fetchErrorBackoff    = 250 * time.Millisecond
+	defaultWorkers       = 64
 	breakerMinRequests   = 20
 )
 
@@ -163,9 +172,7 @@ func (c *Counting) Run(ctx context.Context) error {
 			continue
 		}
 
-		fetches.EachRecord(func(rec *kgo.Record) {
-			c.applyRecord(ctx, rec)
-		})
+		c.applyBatch(ctx, fetches)
 
 		if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
 			c.log.WarnContext(ctx, "consumer: offset commit failed",
@@ -175,6 +182,29 @@ func (c *Counting) Run(ctx context.Context) error {
 	return nil
 }
 
+func (c *Counting) applyBatch(ctx context.Context, fetches kgo.Fetches) {
+	var (
+		wg   sync.WaitGroup
+		slot = make(chan struct{}, c.workers)
+	)
+
+	fetches.EachRecord(func(rec *kgo.Record) {
+		select {
+		case slot <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slot }()
+			c.applyRecord(ctx, rec)
+		}()
+	})
+	wg.Wait()
+}
+
 func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	if parent := remoteSpan(rec); parent.IsValid() {
 		ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
@@ -182,26 +212,31 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	ctx, span := c.tracer.Start(ctx, "vote.apply")
 	defer span.End()
 
+	at := []slog.Attr{
+		slog.Int64("partition", int64(rec.Partition)),
+		slog.Int64("offset", rec.Offset),
+	}
+
 	var msg domain.VoteMessage
 	if err := json.Unmarshal(rec.Value, &msg); err != nil {
-		c.reject(ctx, reasonMalformed, err)
+		c.reject(ctx, reasonMalformed, err, at...)
 		return
 	}
 
 	cfg, ok := c.awaitConfig(ctx, msg.PollID)
 	if !ok {
-		c.reject(ctx, reasonUnknownPoll, fmt.Errorf("poll %s not found", msg.PollID))
+		c.reject(ctx, reasonUnknownPoll, fmt.Errorf("poll %s not found", msg.PollID), at...)
 		return
 	}
 
 	if !cfg.Window.Contains(msg.ProducedAt) {
-		c.reject(ctx, reasonOutOfWindow, fmt.Errorf("vote out of window: %s", msg.ProducedAt))
+		c.reject(ctx, reasonOutOfWindow, fmt.Errorf("vote out of window: %s", msg.ProducedAt), at...)
 		return
 	}
 
 	voterID, err := vote.ParseVoterID(msg.VoterID)
 	if err != nil {
-		c.reject(ctx, reasonBadVoterID, err)
+		c.reject(ctx, reasonBadVoterID, err, at...)
 		return
 	}
 
@@ -211,8 +246,8 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		c.obs.ApplySeconds(time.Since(start).Seconds())
 	}
 	if err != nil {
-		c.log.ErrorContext(ctx, "consumer: vote not applied",
-			slog.String("poll", msg.PollID.String()), slog.String("error", err.Error()))
+		c.reject(ctx, reasonApplyFailed, err,
+			append(at, slog.String("poll", msg.PollID.String()))...)
 		return
 	}
 	if c.obs != nil {
@@ -291,10 +326,13 @@ func (c *Counting) applyWithRetry(
 	}
 }
 
-func (c *Counting) reject(ctx context.Context, reason string, err error) {
+func (c *Counting) reject(ctx context.Context, reason string, err error, attrs ...slog.Attr) {
 	if c.obs != nil {
 		c.obs.VoteRejected(reason)
 	}
-	c.log.WarnContext(ctx, "consumer: message rejected",
-		slog.String("reason", reason), slog.String("error", err.Error()))
+	c.log.LogAttrs(ctx, slog.LevelWarn, "consumer: message rejected",
+		append([]slog.Attr{
+			slog.String("reason", reason),
+			slog.String("error", err.Error()),
+		}, attrs...)...)
 }

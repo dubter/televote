@@ -101,6 +101,7 @@ func TestCounting_DuplicateDeliveryDoesNotDoubleCount(t *testing.T) {
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
 	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+	obs.EXPECT().VoteRejected(reasonApplyFailed).AnyTimes()
 
 	gomock.InOrder(
 		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{2}).
@@ -213,6 +214,7 @@ func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 		Times(1)
 	obs.EXPECT().ApplySeconds(gomock.Any())
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
+	obs.EXPECT().VoteRejected(reasonApplyFailed).Times(1)
 
 	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
 }
@@ -230,6 +232,7 @@ func TestCounting_HoldsPartitionInsteadOfDroppingVote(t *testing.T) {
 		Return(vote.Result(0), errRedisDown).
 		MinTimes(2)
 	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+	obs.EXPECT().VoteRejected(reasonApplyFailed).AnyTimes()
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
 
 	voter, err := vote.DeriveVoterID(cfg.Salt, "viewer")
@@ -296,6 +299,7 @@ func TestCounting_BreakerStopsCallingRedisAfterErrorRatio(t *testing.T) {
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
 	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
+	obs.EXPECT().VoteRejected(reasonApplyFailed).AnyTimes()
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
 	obs.EXPECT().SetBreakerOpen(true).MinTimes(1)
 

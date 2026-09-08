@@ -22,7 +22,7 @@ Grafana       http://localhost:3000/d/televote
 ```bash
 make smoke              # дедуп между двумя инстансами
 make test               # unit с детектором гонок
-make test-integration   # Postgres и Redis через testcontainers
+make test-integration   # Postgres и Redis (Lua-скрипт) через testcontainers
 make load               # k6: стоимость голоса и сверка агрегата
 make chaos              # отказ Redis, ребаланс консьюмеров, падение Postgres
 make lint               # golangci-lint в докере, версия из CI
