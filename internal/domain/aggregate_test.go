@@ -19,8 +19,6 @@ func TestNewAggregate_IsReadyForWrites(t *testing.T) {
 	assert.Equal(t, map[uint8]int64{2: 4}, a.Votes)
 }
 
-// Копия карты обязательна: иначе вызывающий смог бы изменить агрегат после
-// создания, и снимок перестал бы быть снимком.
 func TestNewAggregateFrom_CopiesInput(t *testing.T) {
 	t.Parallel()
 

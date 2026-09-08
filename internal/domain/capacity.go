@@ -48,9 +48,5 @@ func CapacityFor(expectedVotes int64, drainWindow time.Duration) Capacity {
 }
 
 func ceilUnits(load float64, perUnit int) int {
-	n := int(load/float64(perUnit)) + 1
-	if n < minCapacityUnit {
-		return minCapacityUnit
-	}
-	return n
+	return max(minCapacityUnit, int(load/float64(perUnit))+1)
 }

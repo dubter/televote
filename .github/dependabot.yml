@@ -11,7 +11,6 @@ updates:
       testing:
         patterns: ["github.com/stretchr/*", "github.com/testcontainers/*"]
 
-  # Одним PR: пять отдельных обновлений экшенов — шум, а не польза.
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -1,7 +1,5 @@
 name: release
 
-# Образ публикуется только по тегу: main остаётся веткой разработки, а в
-# registry попадает ровно то, что кто-то осознанно пометил версией.
 on:
   push:
     tags: ["v*"]
@@ -38,12 +36,9 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
-          # Прод крутится на arm64 (Graviton дешевле на ~20 %), разработка —
-          # на обеих архитектурах.
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

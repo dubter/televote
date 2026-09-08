@@ -131,35 +131,41 @@ services:
 
   app-1:
     <<: *app
-    entrypoint: ["/televote-api"]
+    entrypoint: ["/api"]
     healthcheck:
-      test: ["CMD", "/televote-api", "-healthcheck"]
+      test: ["CMD", "/api", "-healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 12
     environment:
       <<: *app-env
       INSTANCE: app-1
+    networks:
+      default:
+        aliases: [api]
     ports: ["${APP1_PORT:-8081}:8080"]
 
   app-2:
     <<: *app
-    entrypoint: ["/televote-api"]
+    entrypoint: ["/api"]
     healthcheck:
-      test: ["CMD", "/televote-api", "-healthcheck"]
+      test: ["CMD", "/api", "-healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 12
     environment:
       <<: *app-env
       INSTANCE: app-2
+    networks:
+      default:
+        aliases: [api]
     ports: ["${APP2_PORT:-8082}:8080"]
 
   consumer:
     <<: *app
-    entrypoint: ["/televote-consumer"]
+    entrypoint: ["/consumer"]
     healthcheck:
-      test: ["CMD", "/televote-consumer", "-healthcheck"]
+      test: ["CMD", "/consumer", "-healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -171,9 +177,9 @@ services:
 
   snapshot:
     <<: *app
-    entrypoint: ["/televote-snapshot"]
+    entrypoint: ["/snapshot"]
     healthcheck:
-      test: ["CMD", "/televote-snapshot", "-healthcheck"]
+      test: ["CMD", "/snapshot", "-healthcheck"]
       interval: 5s
       timeout: 3s
       retries: 12

@@ -39,24 +39,21 @@ linters:
             - github.com/google/uuid
         no-http-in-core:
           files:
-            - "**/internal/vote/**"
-            - "**/internal/ballot/**"
-            - "**/internal/snapshot/**"
-            - "**/internal/pollcfg/**"
+            - "**/internal/service/**"
           deny:
             - pkg: net/http
-              desc: "HTTP живёт только в internal/httpapi; бизнес-слой о нём не знает"
+              desc: "HTTP lives only in internal/adapter; the service layer must not know about it"
         single-logger:
           files:
             - "**/internal/**"
             - "**/cmd/**"
           deny:
             - pkg: github.com/sirupsen/logrus
-              desc: "в проекте один логгер — log/slog"
+              desc: "the project has one logger: log/slog"
             - pkg: go.uber.org/zap
-              desc: "в проекте один логгер — log/slog"
+              desc: "the project has one logger: log/slog"
             - pkg: github.com/rs/zerolog
-              desc: "в проекте один логгер — log/slog"
+              desc: "the project has one logger: log/slog"
 
     revive:
       rules:

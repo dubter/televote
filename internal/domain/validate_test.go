@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -353,4 +354,56 @@ func TestWindow_MatchesPollWindow(t *testing.T) {
 	assert.Equal(t, opens.Add(time.Minute), w.ClosesAt)
 	assert.Equal(t, p.IsOpenAt(opens), w.IsOpenAt(opens))
 	assert.False(t, w.IsOpenAt(w.ClosesAt))
+}
+
+func TestNewPoll_RejectsWhatDatabaseNoLongerChecks(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	base := func() domain.PollSpec {
+		return domain.PollSpec{
+			Slug: "final", Question: "кто?", Type: domain.PollTypeSingle,
+			Options:  []string{"а", "б"},
+			OpensAt:  now.Add(2 * time.Hour),
+			ClosesAt: now.Add(3 * time.Hour),
+		}
+	}
+
+	tests := []struct {
+		name string
+		spec func(domain.PollSpec) domain.PollSpec
+	}{
+		{"slug с заглавными", func(s domain.PollSpec) domain.PollSpec { s.Slug = "Final"; return s }},
+		{"slug с пробелом", func(s domain.PollSpec) domain.PollSpec { s.Slug = "a b"; return s }},
+		{"slug начинается с дефиса", func(s domain.PollSpec) domain.PollSpec { s.Slug = "-final"; return s }},
+		{"slug длиннее предела", func(s domain.PollSpec) domain.PollSpec {
+			s.Slug = strings.Repeat("a", domain.MaxSlugLen+1)
+			return s
+		}},
+		{"вопрос длиннее предела", func(s domain.PollSpec) domain.PollSpec {
+			s.Question = strings.Repeat("q", domain.MaxQuestionLen+1)
+			return s
+		}},
+		{"вариант длиннее предела", func(s domain.PollSpec) domain.PollSpec {
+			s.Options = []string{"а", strings.Repeat("б", domain.MaxOptionLen+1)}
+			return s
+		}},
+		{"отрицательная аудитория", func(s domain.PollSpec) domain.PollSpec {
+			s.ExpectedAudience = -1
+			return s
+		}},
+		{"конверсия в процентах, а не долей", func(s domain.PollSpec) domain.PollSpec {
+			s.ExpectedConversion = 30
+			return s
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := domain.NewPoll(tt.spec(base()), now, time.Hour)
+			require.ErrorIs(t, err, domain.ErrInvalidPoll)
+		})
+	}
 }

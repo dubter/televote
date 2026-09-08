@@ -1,0 +1,96 @@
+<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Голосование</title>
+<style>
+:root{--bg:#0f1419;--card:#1a2027;--fg:#e8eaed;--dim:#9aa4b0;--accent:#ffb020;--ok:#4caf7d;--line:#2a323c}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif;padding:16px}
+main{width:100%;max-width:420px}
+h1{font-size:22px;line-height:1.3;margin:0 0 20px}
+button{display:block;width:100%;margin:0 0 10px;padding:16px;border:1px solid var(--line);
+border-radius:12px;background:var(--card);color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+button[aria-pressed=true]{border-color:var(--accent);background:#241f14}
+button:disabled{opacity:.5;cursor:default}
+#go{background:var(--accent);color:#12161a;font-weight:600;text-align:center;border:0;margin-top:16px}
+#msg{margin-top:20px;padding:16px;border-radius:12px;background:var(--card);text-align:center}
+.ok{color:var(--ok)}.err{color:#e8776c}
+small{color:var(--dim);display:block;margin-top:12px}
+</style></head><body><main>
+<div id="app">Загрузка…</div>
+<noscript>Для голосования нужен включённый JavaScript.</noscript>
+</main><script>
+(()=>{"use strict";
+const slug=location.pathname.split("/").filter(Boolean).pop();
+const app=document.getElementById("app");
+let cfg=null,picked=new Set(),skew=0;
+
+const store={
+  get(k){try{return localStorage.getItem(k)}catch(e){return null}},
+  set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+};
+function voterID(){
+  let v=store.get("v");
+  if(!v){v=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random());store.set("v",v)}
+  return v;
+}
+const now=()=>Date.now()+skew;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function show(html){app.innerHTML=html}
+function done(text,cls){show('<div id="msg" class="'+cls+'">'+esc(text)+"</div>")}
+
+async function load(){
+  try{
+    const r=await fetch("/api/v1/polls/"+encodeURIComponent(slug));
+    if(!r.ok)return done("Опрос не найден","err");
+    cfg=await r.json();
+    skew=new Date(cfg.server_time).getTime()-Date.now();
+    if(store.get("done:"+slug))return done("Ваш голос учтён","ok");
+    render();
+  }catch(e){done("Не удалось загрузить опрос","err")}
+}
+
+function render(){
+  const many=cfg.type==="multiple";
+  show("<h1>"+esc(cfg.question)+"</h1>"+
+    cfg.options.map((t,i)=>'<button data-i="'+i+'" aria-pressed="false">'+esc(t)+"</button>").join("")+
+    '<button id="go" disabled>Голосовать</button>'+
+    "<small>"+(many?"Выберите от "+cfg.min_choices+" до "+cfg.max_choices:"Выберите один вариант")+"</small>");
+
+  const go=document.getElementById("go");
+  app.querySelectorAll("button[data-i]").forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.i;
+    if(!many){picked.clear();app.querySelectorAll("button[data-i]").forEach(x=>x.setAttribute("aria-pressed","false"))}
+    if(picked.has(i)){picked.delete(i);b.setAttribute("aria-pressed","false")}
+    else{picked.add(i);b.setAttribute("aria-pressed","true")}
+    const n=picked.size;
+    go.disabled=many?(n<cfg.min_choices||n>cfg.max_choices):n!==1;
+  });
+  go.onclick=send;
+}
+
+async function send(){
+  const go=document.getElementById("go");
+  go.disabled=true;go.textContent="Отправляем…";
+
+  const opens=new Date(cfg.opens_at).getTime(),closes=new Date(cfg.closes_at).getTime();
+  if(now()<opens)return done("Голосование ещё не началось","err");
+  if(now()>=closes)return done("Голосование завершено","err");
+
+  try{
+    const r=await fetch("/api/v1/polls/"+encodeURIComponent(slug)+"/vote",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({choices:[...picked],voter:voterID()})
+    });
+    if(r.status===202){store.set("done:"+slug,"1");return done("Спасибо! Ваш голос учтён","ok")}
+    if(r.status===409)return done("Голосование завершено","err");
+    if(r.status===429)return done("Слишком много запросов, попробуйте позже","err");
+    return done("Не удалось отправить голос","err");
+  }catch(e){done("Нет связи с сервером","err")}
+}
+
+addEventListener("pageshow",e=>{if(e.persisted&&store.get("done:"+slug))done("Ваш голос учтён","ok")});
+load();
+})();
+</script></body></html>

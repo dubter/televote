@@ -9,19 +9,19 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // драйвер database/sql для pgx
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
 	"github.com/dubter/televote/migrations"
 )
 
 func main() {
-	command := flag.String("command", "up", "команда goose: up | down | status | version")
-	timeout := flag.Duration("timeout", time.Minute, "предел ожидания Postgres")
+	command := flag.String("command", "up", "goose command: up | down | status | version")
+	timeout := flag.Duration("timeout", time.Minute, "postgres wait timeout")
 	flag.Parse()
 
 	if err := run(*command, *timeout); err != nil {
-		slog.Error("миграции не применены", slog.Any("error", err))
+		slog.Error("migrations not applied", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
@@ -29,14 +29,14 @@ func main() {
 func run(command string, timeout time.Duration) error {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
-		return fmt.Errorf("POSTGRES_DSN не задан")
+		return fmt.Errorf("POSTGRES_DSN is not set")
 	}
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		return fmt.Errorf("подключение: %w", err)
+		return fmt.Errorf("connect: %w", err)
 	}
-	defer func() { _ = db.Close() }() //nolint:errcheck // ошибка закрытия пула ничего не меняет
+	defer func() { _ = db.Close() }() //nolint:errcheck // a pool close error changes nothing
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -47,13 +47,13 @@ func run(command string, timeout time.Duration) error {
 
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("диалект: %w", err)
+		return fmt.Errorf("dialect: %w", err)
 	}
 
 	if err := goose.RunContext(ctx, command, db, "."); err != nil {
 		return fmt.Errorf("goose %s: %w", command, err)
 	}
-	slog.Info("миграции применены", slog.String("command", command))
+	slog.Info("migrations applied", slog.String("command", command))
 	return nil
 }
 
@@ -67,7 +67,7 @@ func waitReady(ctx context.Context, db *sql.DB) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("postgres не ответил за отведённое время: %w", ctx.Err())
+			return fmt.Errorf("postgres did not respond in time: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}

@@ -1,12 +1,6 @@
-# Точка входа в проект. Начни с `make demo`.
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-# Без --env-file: все переменные стенда имеют дефолты прямо в compose
-# (${VAR:-default}), поэтому `make demo` работает на чистой машине без
-# подготовки. Переопределить порт — обычная переменная окружения:
-#   APP_PORT=9090 make demo
 COMPOSE := docker compose -f deploy/docker-compose.yml
-# Версия совпадает с CI: линтер, который проходит локально, обязан пройти и там.
 LINTER := golangci/golangci-lint:v2.13.2
 MODULE := $(shell head -1 go.mod 2>/dev/null | cut -d' ' -f2)
 
@@ -15,12 +9,10 @@ help: ## показать эту справку
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-# ─── стенд ────────────────────────────────────────────────────────────────
 .PHONY: demo
 demo: ## поднять всё, создать демо-опрос, напечатать ссылки
 	@$(COMPOSE) up -d --build --wait-timeout 300
-	@scripts/wait-ready.sh
-	@scripts/seed-demo.sh
+	@scripts/demo.sh
 
 .PHONY: up
 up: ## поднять стенд без демо-данных
@@ -38,7 +30,6 @@ logs: ## хвост логов приложения
 redis-cli: ## redis-cli внутри сети кластера (снаружи будут MOVED в недоступные IP)
 	@$(COMPOSE) exec redis-1 redis-cli -c
 
-# ─── проверки ─────────────────────────────────────────────────────────────
 .PHONY: test
 test: ## unit-тесты с детектором гонок
 	@go test -race -count=1 ./...
@@ -48,9 +39,15 @@ test-integration: ## integration на настоящих Postgres и Redis (test
 	@go test -count=1 -tags=integration -timeout=12m ./...
 
 .PHONY: cover
-cover: ## покрытие
+cover: ## покрытие без сгенерированных моков
 	@go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+	@grep -v '/mocks/' coverage.out > coverage.filtered && mv coverage.filtered coverage.out
 	@go tool cover -func=coverage.out | tail -1
+
+.PHONY: mocks
+mocks: ## перегенерировать моки (mockgen)
+	@go run go.uber.org/mock/mockgen@latest -version >/dev/null 2>&1 || true
+	@PATH="$(HOME)/go/bin:$$PATH" go generate ./...
 
 .PHONY: lint
 lint: ## golangci-lint в докере, версия та же, что в CI
@@ -70,9 +67,7 @@ smoke: ## end-to-end: дедуп проверяется между двумя и
 
 .PHONY: chaos
 chaos: ## сценарии отказов; каждый заканчивается сверкой агрегата
-	@scripts/chaos/redis-master.sh
-	@scripts/chaos/consumer.sh
-	@scripts/chaos/postgres.sh
+	@scripts/chaos.sh
 
 .PHONY: load
 load: ## k6: стоимость одного голоса + сверка суммы счётчиков
@@ -81,7 +76,6 @@ load: ## k6: стоимость одного голоса + сверка сум�
 	  -e SLUG=load-$$(date +%s) \
 	  k6 run /scripts/vote.js
 
-# ─── разработка ───────────────────────────────────────────────────────────
 .PHONY: build
 build: ## собрать бинарь
 	@CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/televote ./cmd/televote

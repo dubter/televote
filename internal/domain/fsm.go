@@ -9,5 +9,5 @@ var transitions = map[Status]Status{
 
 func (s Status) CanTransitionTo(next Status) bool {
 	allowed, ok := transitions[s]
-	return ok && allowed != "" && allowed == next
+	return ok && allowed == next
 }
