@@ -102,6 +102,10 @@ type Poll struct {
 	// ResultsVisibleDuringVoting по умолчанию false: промежуточный счёт влияет
 	// на непроголосовавших и портит опрос.
 	ResultsVisibleDuringVoting bool
+	// Salt — соль вывода voterID. Посекретная на опрос: она не даёт клиенту
+	// занять чужой дедуп-ключ и делает участие одного браузера в разных
+	// опросах несвязуемым.
+	Salt []byte
 	// Version — optimistic locking, чтобы два админа не затёрли правки друг друга.
 	Version uint32
 }

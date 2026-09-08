@@ -21,6 +21,20 @@ CREATE TABLE polls (
     -- Взять его из глобального конфига — значит открыть повторное голосование
     -- в момент смены значения в эфире.
     shard_count                   integer     NOT NULL,
+    -- expected_audience заполняет админ, и ёмкость выводится функцией от него,
+    -- а не из константы в коде: конверсия в ТЗ не задана, поэтому допущение
+    -- обязано быть пер-опрос (design.md §2, §10).
+    expected_audience             bigint      NOT NULL DEFAULT 0,
+    -- Расчётный сценарий из design.md §2 — 30 %. Дефолт здесь, а не в Go:
+    -- опрос, созданный минуя админку, всё равно получит планировочную цифру,
+    -- а не ноль, который тихо занулил бы прогноз ёмкости.
+    expected_conversion           double precision NOT NULL DEFAULT 0.30,
+    -- salt — соль ВЫВОДА voter_id для этого опроса, 32 байта из crypto/rand.
+    -- Пер-опрос, а не глобальная: одна соль на сервис делала бы voter_id
+    -- сопоставимыми между опросами, то есть связывала бы человека с историей
+    -- голосований. Без DEFAULT намеренно — соль обязан сгенерировать сервер,
+    -- и опрос без соли не должен создаваться молча.
+    salt                          bytea       NOT NULL,
     results_visible_during_voting boolean     NOT NULL DEFAULT false,
     -- version — оптимистическая блокировка для переходов статуса.
     version                       bigint      NOT NULL DEFAULT 1,
@@ -35,7 +49,13 @@ CREATE TABLE polls (
     CONSTRAINT polls_choices_sane    CHECK (min_choices >= 1 AND max_choices >= min_choices AND max_choices <= 256),
     CONSTRAINT polls_window_sane     CHECK (closes_at > opens_at),
     CONSTRAINT polls_shard_count_cap CHECK (shard_count BETWEEN 1 AND 16384),
-    CONSTRAINT polls_version_positive CHECK (version >= 1)
+    CONSTRAINT polls_version_positive CHECK (version >= 1),
+    CONSTRAINT polls_audience_nonneg  CHECK (expected_audience >= 0),
+    -- Конверсия — доля, а не проценты. Граница в БД, потому что 30 вместо 0.30
+    -- не сломает ни один тест приёма, а прогноз ёмкости завысит стократно.
+    CONSTRAINT polls_conversion_frac  CHECK (expected_conversion >= 0 AND expected_conversion <= 1),
+    -- 32 байта — длина ключа HMAC-SHA256, которым выводится voter_id.
+    CONSTRAINT polls_salt_len         CHECK (length(salt) = 32)
 );
 
 -- Фоновый рефрешер конфига дёргает этот запрос раз в 2 с с каждого инстанса.
@@ -86,6 +106,54 @@ CREATE TABLE poll_stats (
     CONSTRAINT poll_stats_ballots_nonneg  CHECK (ballots_total >= 0)
 );
 
+-- poll_results_adjusted: ПУБЛИКУЕМЫЙ результат. Считается один раз при
+-- финализации, когда оператор применил исключения накрученных подсетей.
+--
+-- Отдельная таблица, а не колонка в poll_results, потому что монотонность и
+-- исключение голосов несовместимы: poll_results обязана только расти (это
+-- аудит процесса подсчёта), а исключение по определению уменьшает цифру.
+-- В одной таблице GREATEST съел бы исключение и опубликовал накрутку.
+--
+-- Явный PK обязателен: без него ON CONFLICT (poll_id, option_idx) не находит
+-- арбитра и падает в рантайме при первой финализации, а не при миграции.
+CREATE TABLE poll_results_adjusted (
+    poll_id    uuid     NOT NULL,
+    option_idx smallint NOT NULL,
+    votes      bigint   NOT NULL DEFAULT 0,
+
+    CONSTRAINT poll_results_adjusted_pkey PRIMARY KEY (poll_id, option_idx),
+    CONSTRAINT poll_results_adjusted_poll_fkey FOREIGN KEY (poll_id)
+        REFERENCES polls (id) ON DELETE CASCADE,
+    CONSTRAINT poll_results_adjusted_idx_range CHECK (option_idx BETWEEN 0 AND 255),
+    CONSTRAINT poll_results_adjusted_votes_nonneg CHECK (votes >= 0)
+);
+
+-- poll_stats_adjusted: пер-опросная часть публикуемого результата — число
+-- бюллетеней и список исключённых подсетей.
+--
+-- Отдельно от poll_results_adjusted, а не колонкой excluded_nets в каждой её
+-- строке: список — свойство финализации, а не опции. Продублированный по
+-- строкам, он допускает состояние, в котором строки не согласны между собой,
+-- и читателю приходится выбирать, какой из списков считать настоящим.
+--
+-- Наличие строки здесь — признак «результат финализирован». Это отличает
+-- «ещё не публиковали» от «опубликовали, и там нули».
+--
+-- excluded_nets — /16-подсети, то есть агрегаты. Полных адресов тут нет и
+-- быть не может (CLAUDE.md, «Приватность»).
+CREATE TABLE poll_stats_adjusted (
+    poll_id       uuid        NOT NULL,
+    ballots_total bigint      NOT NULL DEFAULT 0,
+    excluded_nets jsonb       NOT NULL DEFAULT '[]'::jsonb,
+    at            timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT poll_stats_adjusted_pkey PRIMARY KEY (poll_id),
+    CONSTRAINT poll_stats_adjusted_poll_fkey FOREIGN KEY (poll_id)
+        REFERENCES polls (id) ON DELETE CASCADE,
+    CONSTRAINT poll_stats_adjusted_ballots_nonneg CHECK (ballots_total >= 0),
+    CONSTRAINT poll_stats_adjusted_nets_is_array  CHECK (jsonb_typeof(excluded_nets) = 'array')
+);
+
 CREATE TABLE admin_users (
     id            uuid        NOT NULL,
     login         text        NOT NULL,
@@ -123,6 +191,8 @@ CREATE INDEX admin_audit_entity_idx ON admin_audit (entity, at DESC);
 
 DROP TABLE IF EXISTS admin_audit;
 DROP TABLE IF EXISTS admin_users;
+DROP TABLE IF EXISTS poll_stats_adjusted;
+DROP TABLE IF EXISTS poll_results_adjusted;
 DROP TABLE IF EXISTS poll_stats;
 DROP TABLE IF EXISTS poll_results;
 DROP TABLE IF EXISTS poll_options;
