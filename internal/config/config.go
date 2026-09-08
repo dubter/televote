@@ -112,6 +112,14 @@ type Config struct {
 	// thundering herd из тысяч одновременных промахов.
 	PollConfigRefresh time.Duration `env:"POLL_CONFIG_REFRESH" envDefault:"2s"`
 
+	// PollMinLeadTime — насколько заранее обязан создаваться опрос.
+	//
+	// Ёмкость под эфир поднимается по расписанию: Kafka за час, Redis и
+	// консьюмеры за пять минут. Опрос, открывающийся раньше, эфира не
+	// получит — отказать при создании дешевле, чем в момент ролика.
+	// На стенде ёмкость уже поднята, поэтому там значение обнуляется.
+	PollMinLeadTime time.Duration `env:"POLL_MIN_LEAD_TIME" envDefault:"1h"`
+
 	// ─── ballot-токены ───
 	// Два ключа: подписываем текущим, проверяем обоими. Иначе ротация в эфире
 	// инвалидирует все выданные токены разом.
@@ -341,6 +349,9 @@ func (c *Config) validate() error {
 		fail("POSTGRES_MAX_CONNS", "должно быть положительным")
 	}
 
+	if c.PollMinLeadTime < 0 {
+		fail("POLL_MIN_LEAD_TIME", "не может быть отрицательным")
+	}
 	if c.PollConfigRefresh <= 0 {
 		fail("POLL_CONFIG_REFRESH", "должен быть положительным: горячий путь читает только память")
 	}

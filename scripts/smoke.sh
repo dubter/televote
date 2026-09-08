@@ -28,8 +28,10 @@ token=$(curl -fsS -X POST "${API}/admin/login" -H 'Content-Type: application/jso
   | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 [ -n "$token" ] || fail "не удалось войти в админку"
 
-opens=$(date -u -v+2H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')
-closes=$(date -u -v+3H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+3 hours' '+%Y-%m-%dT%H:%M:%SZ')
+# Окно начинается минуту назад: голосовать можно сразу, и это же проверяет,
+# что окно считается по opens_at, а не по одному лишь статусу опроса.
+opens=$(date -u -v-1M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')
+closes=$(date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+1 hour' '+%Y-%m-%dT%H:%M:%SZ')
 
 curl -fsS -X POST "${API}/admin/polls" -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${token}" -d @- >/dev/null <<JSON || fail "опрос не создан"
@@ -72,8 +74,19 @@ done
 ok "после дренажа ровно ОДИН голос — дедуп не зависит от инстанса"
 
 curl -fsS -X POST "${API}/admin/polls/${SLUG}/close" -H "Authorization: Bearer ${token}" >/dev/null
-code=$(vote_on "$APP1_PORT"); [ "$code" = "409" ] || fail "голос после закрытия принят с кодом $code"
-ok "голос после закрытия отвергнут (409)"
+
+# Закрытие доезжает до инстансов фоновым рефрешером конфига, а не мгновенно.
+# Так и задумано: горячий путь читает только память, иначе истечение кэша при
+# 2M RPS дало бы thundering herd. Цена — задержка в один интервал обновления.
+closed=""
+for _ in $(seq 1 15); do
+  sleep 1
+  code=$(vote_on "$APP1_PORT")
+  # 409 — опрос закрыт; 404 — он уже покинул выборку активных.
+  if [ "$code" = "409" ] || [ "$code" = "404" ]; then closed=$code; break; fi
+done
+[ -n "$closed" ] || fail "голос после закрытия принят с кодом $code"
+ok "голос после закрытия отвергнут ($closed)"
 
 code=$(curl -s -o /dev/null -w '%{http_code}' "${API}/admin/polls")
 [ "$code" = "401" ] || fail "админка без токена ответила $code вместо 401"

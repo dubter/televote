@@ -25,8 +25,10 @@ if [ -z "$token" ]; then
   exit 1
 fi
 
-opens=$(date -u -v+2H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')
-closes=$(date -u -v+3H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+3 hours' '+%Y-%m-%dT%H:%M:%SZ')
+# Окно начинается минуту назад: голосовать можно сразу, и это же проверяет,
+# что окно считается по opens_at, а не по одному лишь статусу опроса.
+opens=$(date -u -v-1M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '-1 minute' '+%Y-%m-%dT%H:%M:%SZ')
+closes=$(date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+1 hour' '+%Y-%m-%dT%H:%M:%SZ')
 
 curl -fsS -X POST "${API}/polls" -H 'Content-Type: application/json' \
   -H "Authorization: Bearer ${token}" -d @- >/dev/null <<JSON || true

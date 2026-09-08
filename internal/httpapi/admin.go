@@ -17,13 +17,6 @@ import (
 	"github.com/OWNER/televote/internal/storage/postgres"
 )
 
-// minLeadTime — насколько заранее должен создаваться опрос.
-//
-// Ёмкость под эфир поднимается по расписанию: Kafka за час, Redis и
-// консьюмеры за пять минут. Опрос, открывающийся раньше, эфир не получит —
-// лучше отказать при создании, чем в момент ролика.
-const minLeadTime = time.Hour
-
 // PollStore — то, что админке нужно от хранилища опросов.
 type PollStore interface {
 	CreateRow(ctx context.Context, row *postgres.PollRow) error
@@ -54,12 +47,18 @@ type AdminHandler struct {
 	tokens  *auth.TokenService
 	limiter *auth.LoginLimiter
 	now     func() time.Time
+
+	// minLeadTime — насколько заранее обязан создаваться опрос: ёмкость под
+	// эфир поднимается по расписанию и раньше просто не успеет. На стенде
+	// ёмкость уже поднята, поэтому там значение нулевое.
+	minLeadTime time.Duration
 }
 
 // NewAdminHandler собирает админский обработчик.
 func NewAdminHandler(
 	polls PollStore, results ResultStore, admins AdminStore,
 	tokens *auth.TokenService, limiter *auth.LoginLimiter, now func() time.Time,
+	minLeadTime time.Duration,
 ) (*AdminHandler, error) {
 	switch {
 	case polls == nil, results == nil, admins == nil:
@@ -74,7 +73,7 @@ func NewAdminHandler(
 		now = time.Now
 	}
 	return &AdminHandler{polls: polls, results: results, admins: admins,
-		tokens: tokens, limiter: limiter, now: now}, nil
+		tokens: tokens, limiter: limiter, now: now, minLeadTime: minLeadTime}, nil
 }
 
 // Routes отдаёт админские маршруты. Логин открыт, всё остальное под токеном.
@@ -263,9 +262,9 @@ func (h *AdminHandler) buildPollRow(req createPollRequest) (*postgres.PollRow, e
 	if !closesAt.After(opensAt) {
 		return nil, fmt.Errorf("%w: closes_at не позже opens_at", errBadRequest)
 	}
-	if opensAt.Sub(h.now()) < minLeadTime {
+	if h.minLeadTime > 0 && opensAt.Sub(h.now()) < h.minLeadTime {
 		return nil, fmt.Errorf("%w: опрос открывается раньше чем через %s — ёмкость не успеет подняться",
-			errBadRequest, minLeadTime)
+			errBadRequest, h.minLeadTime)
 	}
 
 	options := make([]domain.Option, 0, len(req.Options))

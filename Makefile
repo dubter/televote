@@ -1,7 +1,11 @@
 # Точка входа в проект. Начни с `make demo`.
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
+# Без --env-file: все переменные стенда имеют дефолты прямо в compose
+# (${VAR:-default}), поэтому `make demo` работает на чистой машине без
+# подготовки. Переопределить порт — обычная переменная окружения:
+#   APP_PORT=9090 make demo
+COMPOSE := docker compose -f deploy/docker-compose.yml
 MODULE := $(shell head -1 go.mod 2>/dev/null | cut -d' ' -f2)
 
 .PHONY: help
@@ -11,13 +15,13 @@ help: ## показать эту справку
 
 # ─── стенд ────────────────────────────────────────────────────────────────
 .PHONY: demo
-demo: .env ## поднять всё, создать демо-опрос, напечатать ссылки
+demo: ## поднять всё, создать демо-опрос, напечатать ссылки
 	@$(COMPOSE) up -d --build --wait-timeout 300
 	@scripts/wait-ready.sh
 	@scripts/seed-demo.sh
 
 .PHONY: up
-up: .env ## поднять стенд без демо-данных
+up: ## поднять стенд без демо-данных
 	@$(COMPOSE) up -d --build
 
 .PHONY: down
@@ -31,9 +35,6 @@ logs: ## хвост логов приложения
 .PHONY: redis-cli
 redis-cli: ## redis-cli внутри сети кластера (снаружи будут MOVED в недоступные IP)
 	@$(COMPOSE) exec redis-1 redis-cli -c
-
-.env:
-	@cp .env.example .env && echo "создан .env из .env.example — проверь секреты"
 
 # ─── проверки ─────────────────────────────────────────────────────────────
 .PHONY: test

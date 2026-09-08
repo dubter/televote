@@ -227,7 +227,7 @@ func (a *app) buildAdmin() (*httpapi.AdminHandler, error) {
 	}
 
 	limiter := auth.NewLoginLimiter(5, time.Minute, 10_000)
-	return httpapi.NewAdminHandler(polls, results, admins, tokens, limiter, time.Now)
+	return httpapi.NewAdminHandler(polls, results, admins, tokens, limiter, time.Now, a.cfg.PollMinLeadTime)
 }
 
 // bootstrapAdmin заводит первую учётную запись, если её ещё нет.
