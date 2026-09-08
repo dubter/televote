@@ -34,19 +34,24 @@ type VoteSink interface {
 	Send(ctx context.Context, m producer.VoteMessage) error
 }
 
-// PublicHandler обслуживает зрителя: выдаёт конфиг опроса и принимает голоса.
-//
-// На этом пути нет ни Redis, ни Postgres. Всё, что нужно голосу, лежит в
-// памяти процесса, а сам голос уезжает в Kafka — поэтому падение хранилищ
-// задерживает результат, но не останавливает приём.
+// Observer собирает исходы приёма.
+type Observer interface {
+	VoteAccepted()
+	VoteRejected(reason string)
+	ProduceSeconds(d float64)
+}
+
+// PublicHandler обслуживает зрителя: отдаёт конфиг опроса и принимает голоса.
+// Ни Redis, ни Postgres на этом пути нет — голос уезжает в Kafka.
 type PublicHandler struct {
 	cache ConfigCache
 	sink  VoteSink
+	obs   Observer
 	now   func() time.Time
 }
 
 // NewPublicHandler собирает обработчик приёма.
-func NewPublicHandler(cache ConfigCache, sink VoteSink, now func() time.Time) (*PublicHandler, error) {
+func NewPublicHandler(cache ConfigCache, sink VoteSink, obs Observer, now func() time.Time) (*PublicHandler, error) {
 	if cache == nil {
 		return nil, errors.New("httpapi: не задан кэш конфигов")
 	}
@@ -56,7 +61,10 @@ func NewPublicHandler(cache ConfigCache, sink VoteSink, now func() time.Time) (*
 	if now == nil {
 		now = time.Now
 	}
-	return &PublicHandler{cache: cache, sink: sink, now: now}, nil
+	if obs == nil {
+		obs = noopObserver{}
+	}
+	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now}, nil
 }
 
 // Routes отдаёт публичные маршруты.
@@ -131,12 +139,14 @@ type voteResponse struct {
 func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 	cfg, ok := h.cache.BySlug(chi.URLParam(r, "slug"))
 	if !ok {
+		h.obs.VoteRejected(reasonUnknownPoll)
 		WriteError(w, r, errNotFound)
 		return
 	}
 
 	var req voteRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxVoteBody)).Decode(&req); err != nil {
+		h.obs.VoteRejected(reasonMalformed)
 		if errors.Is(err, io.EOF) || errors.As(err, new(*http.MaxBytesError)) {
 			WriteError(w, r, fmt.Errorf("%w: тело запроса", errBadRequest))
 			return
@@ -146,16 +156,19 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := cfg.Rules.Validate(req.Choices); err != nil {
+		h.obs.VoteRejected(reasonInvalidChoices)
 		WriteError(w, r, err)
 		return
 	}
 	if !cfg.Window.IsOpenAt(h.now()) {
+		h.obs.VoteRejected(reasonPollClosed)
 		WriteError(w, r, domain.ErrPollClosed)
 		return
 	}
 
 	voterID, err := vote.DeriveVoterID(cfg.Salt, req.Voter)
 	if err != nil {
+		h.obs.VoteRejected(reasonBadVoter)
 		WriteError(w, r, err)
 		return
 	}
@@ -170,13 +183,37 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		ProducedAt: h.now().UTC(),
 	}
 
+	// Kafka недоступна — единственный отказ, видимый клиенту.
+	// Честный 503, а не 202 за голос, которого никто не принял.
+	start := h.now()
 	if err := h.sink.Send(r.Context(), msg); err != nil {
-		// Kafka недоступна — единственный отказ, останавливающий приём.
-		// Честный 503 с Retry-After, а не 200 за неучтённый голос.
+		h.obs.VoteRejected(reasonUnavailable)
 		w.Header().Set("Retry-After", "1")
 		WriteError(w, r, fmt.Errorf("%w: %w", errUnavailable, err))
 		return
 	}
 
+	h.obs.ProduceSeconds(h.now().Sub(start).Seconds())
+	h.obs.VoteAccepted()
+
 	writeJSON(w, http.StatusAccepted, voteResponse{Status: "accepted"})
 }
+
+// Причины отказа. Набор конечен: значения уходят в лейбл метрики, а
+// произвольная строка взорвала бы кардинальность.
+const (
+	reasonUnknownPoll    = "unknown_poll"
+	reasonMalformed      = "malformed"
+	reasonInvalidChoices = "invalid_choices"
+	reasonPollClosed     = "poll_closed"
+	reasonBadVoter       = "bad_voter"
+	reasonUnavailable    = "unavailable"
+)
+
+// noopObserver позволяет собрать обработчик без метрик — в тестах и в роли,
+// где приём не поднимается.
+type noopObserver struct{}
+
+func (noopObserver) VoteAccepted()          {}
+func (noopObserver) VoteRejected(string)    {}
+func (noopObserver) ProduceSeconds(float64) {}

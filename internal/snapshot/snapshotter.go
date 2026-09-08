@@ -53,6 +53,13 @@ type Snapshotter struct {
 	grace time.Duration
 	now   func() time.Time
 	log   *slog.Logger
+	obs   Observer
+}
+
+// Observer публикует наблюдаемое состояние дренажа.
+type Observer interface {
+	SetConsumerLag(n int64)
+	SetBallots(pollSlug string, n int64)
 }
 
 // Config — параметры снапшотера.
@@ -61,6 +68,7 @@ type Config struct {
 	Grace    time.Duration
 	Now      func() time.Time
 	Log      *slog.Logger
+	Observer Observer
 }
 
 // New собирает снапшотер.
@@ -88,6 +96,7 @@ func New(agg Aggregator, results Results, polls Polls, lag LagReader, cfg Config
 	return &Snapshotter{
 		agg: agg, results: results, polls: polls, lag: lag,
 		interval: cfg.Interval, grace: cfg.Grace, now: cfg.Now, log: cfg.Log,
+		obs: cfg.Observer,
 	}, nil
 }
 
@@ -184,6 +193,9 @@ func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggr
 	if err := s.results.Upsert(ctx, p.ID, merged); err != nil {
 		return domain.Aggregate{}, fmt.Errorf("запись снимка: %w", err)
 	}
+	if s.obs != nil {
+		s.obs.SetBallots(p.Slug, merged.Ballots)
+	}
 	return merged, nil
 }
 
@@ -220,6 +232,9 @@ func (s *Snapshotter) drained(ctx context.Context) (bool, error) {
 	lag, err := s.lag.Lag(ctx)
 	if err != nil {
 		return false, fmt.Errorf("чтение consumer lag: %w", err)
+	}
+	if s.obs != nil {
+		s.obs.SetConsumerLag(lag)
 	}
 	return lag == 0, nil
 }

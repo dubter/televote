@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/rueidis"
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/dubter/televote/internal/config"
 	"github.com/dubter/televote/internal/consumer"
 	"github.com/dubter/televote/internal/httpapi"
+	"github.com/dubter/televote/internal/metrics"
 	"github.com/dubter/televote/internal/pollcfg"
 	"github.com/dubter/televote/internal/producer"
 	"github.com/dubter/televote/internal/snapshot"
@@ -53,6 +55,7 @@ type app struct {
 	fraudKafka *kgo.Client
 	producer   *producer.Producer
 
+	metrics     *metrics.Metrics
 	cache       *pollcfg.Cache
 	counting    *consumer.Counting
 	fraud       *consumer.Fraud
@@ -65,7 +68,7 @@ type app struct {
 // Каждый шаг возвращает ошибку наверх, а не логирует и продолжает: инстанс,
 // стартовавший без Kafka или без Redis, выглядит живым и молча теряет голоса.
 func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger, r role) (*app, error) {
-	a := &app{cfg: cfg, log: log, role: r}
+	a := &app{cfg: cfg, log: log, role: r, metrics: metrics.New(prometheus.DefaultRegisterer)}
 
 	if err := a.connectStores(ctx); err != nil {
 		a.Close()
@@ -161,7 +164,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("применение голосов: %w", err)
 	}
 
-	a.counting, err = consumer.NewCounting(a.kafka, caster, a.cache, nil, a.log)
+	a.counting, err = consumer.NewCounting(a.kafka, caster, a.cache, countingObserver{a.metrics}, a.log)
 	if err != nil {
 		return fmt.Errorf("консьюмер подсчёта: %w", err)
 	}
@@ -181,6 +184,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		Interval: a.cfg.SnapshotInterval,
 		Grace:    a.cfg.SnapshotFinalGrace,
 		Log:      a.log,
+		Observer: a.metrics,
 	})
 	if err != nil {
 		return fmt.Errorf("снапшотер: %w", err)
@@ -215,7 +219,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 }
 
 func (a *app) buildHTTP() error {
-	public, err := httpapi.NewPublicHandler(a.cache, a.producer, time.Now)
+	public, err := httpapi.NewPublicHandler(a.cache, a.producer, a.metrics, time.Now)
 	if err != nil {
 		return fmt.Errorf("публичный обработчик: %w", err)
 	}

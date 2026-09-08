@@ -16,7 +16,9 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/dubter/televote/internal/metrics"
 	"github.com/dubter/televote/internal/storage/postgres"
+	"github.com/dubter/televote/internal/vote"
 	"github.com/dubter/televote/pkg/health"
 )
 
@@ -159,4 +161,13 @@ func adminJWTBytes(raw string) []byte {
 	}
 	sum := sha256.Sum256([]byte("televote-dev-admin-jwt:" + raw))
 	return sum[:]
+}
+
+// countingObserver приводит метрики к интерфейсу consumer.Observer:
+// у консьюмера сигнатуры с контекстом, у метрик — без.
+type countingObserver struct{ m *metrics.Metrics }
+
+func (o countingObserver) VoteCounted(ctx context.Context, r vote.Result) { o.m.VoteCounted(ctx, r) }
+func (o countingObserver) VoteRejected(ctx context.Context, reason string) {
+	o.m.VoteRejectedCtx(ctx, reason)
 }

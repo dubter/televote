@@ -93,7 +93,7 @@ func hotConfig(t *testing.T, pollType domain.PollType, minChoices, maxChoices ui
 func newPublic(t *testing.T, cfg *pollcfg.HotConfig, sink *stubSink, now time.Time) http.Handler {
 	t.Helper()
 
-	h, err := httpapi.NewPublicHandler(stubCache{cfg.Slug: cfg}, sink, func() time.Time { return now })
+	h, err := httpapi.NewPublicHandler(stubCache{cfg.Slug: cfg}, sink, nil, func() time.Time { return now })
 	require.NoError(t, err)
 	return httpx.ClientIP(nil)(h.Routes())
 }

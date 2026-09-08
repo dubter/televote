@@ -22,12 +22,13 @@ require (
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.46.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 )
 
 require (
+	github.com/prometheus/client_model v0.6.2
+	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/twmb/franz-go v1.21.6
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 )
@@ -73,14 +74,11 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.29 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/testcontainers/testcontainers-go v0.44.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.13.1 // indirect
