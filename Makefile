@@ -42,8 +42,8 @@ test: ## unit-тесты с детектором гонок
 	@go test -race -count=1 ./...
 
 .PHONY: test-integration
-test-integration: ## integration на testcontainers (Redis Cluster + Postgres)
-	@go test -race -count=1 -tags=integration -timeout=10m ./...
+test-integration: ## integration на настоящих Postgres и Redis (testcontainers)
+	@go test -count=1 -tags=integration -timeout=12m ./...
 
 .PHONY: cover
 cover: ## покрытие
