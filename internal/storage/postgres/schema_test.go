@@ -16,7 +16,7 @@ import (
 //
 // Не «CREATE TABLE в тесте»: тогда тест проверял бы схему, которой нет в
 // проде, и расхождение всплыло бы только на стенде.
-func applySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func applySchema(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
 	entries, err := migrations.FS.ReadDir(".")

@@ -50,7 +50,7 @@ func startAll(t *testing.T) (*postgres.PollRepo, *postgres.ResultRepo, *postgres
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 
-	applySchema(t, ctx, pool)
+	applySchema(ctx, t, pool)
 
 	polls, err := postgres.NewPollRepo(pool)
 	require.NoError(t, err)
