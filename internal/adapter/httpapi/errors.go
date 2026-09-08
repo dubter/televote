@@ -1,12 +1,12 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/platform/httpx"
 	"github.com/dubter/televote/internal/service/vote"
 )
 
@@ -15,9 +15,7 @@ type errorResponse struct {
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body) //nolint:errcheck,errchkjson // headers are already sent
+	httpx.WriteJSON(w, status, body)
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {

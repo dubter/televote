@@ -36,7 +36,11 @@ func run(command string, timeout time.Duration) error {
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
-	defer func() { _ = db.Close() }() //nolint:errcheck // a pool close error changes nothing
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Warn("closing connection pool", slog.Any("error", err))
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

@@ -143,7 +143,7 @@ func (c *Counting) Run(ctx context.Context) error {
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
 				if errors.Is(e.Err, context.Canceled) {
-					return nil //nolint:nilerr
+					return nil //nolint:nilerr // cancellation is a normal shutdown, not a failure
 				}
 				c.log.ErrorContext(ctx, "consumer: read from kafka",
 					slog.String("topic", e.Topic), slog.String("error", e.Err.Error()))

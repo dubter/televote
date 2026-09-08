@@ -13,10 +13,11 @@ import (
 	context "context"
 	reflect "reflect"
 
-	postgres "github.com/dubter/televote/internal/adapter/postgres"
-	domain "github.com/dubter/televote/internal/domain"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
+
+	postgres "github.com/dubter/televote/internal/adapter/postgres"
+	domain "github.com/dubter/televote/internal/domain"
 )
 
 // MockPollStore is a mock of PollStore interface.

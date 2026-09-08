@@ -364,7 +364,7 @@ func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join("..", "..", ".env.example")
-	f, err := os.Open(path) //nolint:gosec // путь фиксированный, внутри репозитория
+	f, err := os.Open(path) //nolint:gosec // fixed path inside the repository
 	if err != nil {
 		t.Skipf("%s недоступен: %v", path, err)
 	}

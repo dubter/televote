@@ -13,9 +13,10 @@ import (
 	context "context"
 	reflect "reflect"
 
-	domain "github.com/dubter/televote/internal/domain"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
+
+	domain "github.com/dubter/televote/internal/domain"
 )
 
 // MockAggregator is a mock of Aggregator interface.

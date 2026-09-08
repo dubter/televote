@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/netip"
@@ -81,7 +80,5 @@ func SecurityHeaders(next http.Handler) http.Handler {
 }
 
 func writeError(w http.ResponseWriter, status int, code string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": code}) //nolint:errcheck,errchkjson // headers are already sent
+	WriteJSON(w, status, map[string]string{"error": code})
 }

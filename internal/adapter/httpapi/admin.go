@@ -366,7 +366,7 @@ func (h *AdminHandler) audit(r *http.Request, action, entity string, payload any
 	if claims != nil {
 		actor = claims.Subject
 	}
-	if err := h.admins.Audit(r.Context(), actor, action, entity, payload); err != nil { //nolint:errcheck // logged right below
+	if err := h.admins.Audit(r.Context(), actor, action, entity, payload); err != nil {
 		slog.ErrorContext(r.Context(), "failed to write the action to the audit log",
 			slog.String("action", action), slog.String("entity", entity),
 			slog.String("error", err.Error()))

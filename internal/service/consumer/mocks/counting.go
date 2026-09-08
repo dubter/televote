@@ -13,10 +13,11 @@ import (
 	context "context"
 	reflect "reflect"
 
-	pollcfg "github.com/dubter/televote/internal/service/pollcfg"
-	vote "github.com/dubter/televote/internal/service/vote"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
+
+	pollcfg "github.com/dubter/televote/internal/service/pollcfg"
+	vote "github.com/dubter/televote/internal/service/vote"
 )
 
 // MockApplier is a mock of Applier interface.

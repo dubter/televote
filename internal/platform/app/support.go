@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -28,17 +30,22 @@ func SelfHealthcheck() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	//nolint:gosec // G704: address comes from our own HTTP_ADDR, not from a request
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/readyz", http.NoBody)
+	probe := url.URL{Scheme: "http", Host: addr, Path: "/readyz"}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probe.String(), http.NoBody)
 	if err != nil {
 		return 1
 	}
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec // G704: address is built from our own HTTP_ADDR
+	resp, err := http.DefaultClient.Do(req)
 
 	if err != nil {
 		return 1
 	}
-	defer func() { _ = resp.Body.Close() }() //nolint:errcheck // healthcheck only reads the status code
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("healthcheck: closing response body", slog.Any("error", err))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return 1
@@ -97,7 +104,7 @@ func (a *app) datacenterRanges() []netip.Prefix {
 	}
 
 	var out []netip.Prefix
-	for line := range strings.SplitSeq(string(data), "\n") { //nolint:gocritic // lines are short
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
