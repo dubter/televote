@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/producer"
+	"github.com/dubter/televote/internal/producer"
 )
 
 func TestNew_RejectsIncompleteConfig(t *testing.T) {

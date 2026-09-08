@@ -9,7 +9,7 @@
 
 ## Global Constraints
 
-- Go 1.26, module `github.com/OWNER/televote`
+- Go 1.26, module `github.com/dubter/televote`
 - **go.mod трогает только задача, которая добавляет новую библиотеку**; `go mod tidy` не запускать
 - **Никто не делает `git commit`** — параллельные агенты дерутся за `index.lock`
 - Зависимости однонаправленные: `domain ← application ← adapters`, проверяет `depguard`

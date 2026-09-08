@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/auth"
+	"github.com/dubter/televote/internal/auth"
 )
 
 var testKey = []byte("0123456789abcdef0123456789abcdef")

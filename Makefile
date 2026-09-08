@@ -86,13 +86,6 @@ build: ## собрать бинарь
 migrate: ## применить миграции к локальной БД
 	@go run github.com/pressly/goose/v3/cmd/goose@latest -dir migrations postgres "$$POSTGRES_DSN" up
 
-.PHONY: module
-module: ## сменить module path: make module OWNER=yourname
-	@test -n "$(OWNER)" || (echo "укажи OWNER: make module OWNER=yourname" && exit 1)
-	@grep -rl 'github.com/OWNER/televote' --include='*.go' --include='*.mod' --include='*.yml' . \
-	  | xargs sed -i '' 's|github.com/OWNER/televote|github.com/$(OWNER)/televote|g'
-	@echo "module path: github.com/$(OWNER)/televote"
-
 .PHONY: tidy
 tidy: ## go mod tidy + форматирование
 	@go mod tidy && gofmt -w -s .

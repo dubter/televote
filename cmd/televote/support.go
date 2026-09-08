@@ -16,8 +16,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/OWNER/televote/internal/storage/postgres"
-	"github.com/OWNER/televote/pkg/health"
+	"github.com/dubter/televote/internal/storage/postgres"
+	"github.com/dubter/televote/pkg/health"
 )
 
 // selfHealthcheck дёргает /readyz собственного процесса.

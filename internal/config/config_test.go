@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/config"
+	"github.com/dubter/televote/internal/config"
 )
 
 // minimalEnv — тот минимум, без которого сервис не имеет права стартовать.

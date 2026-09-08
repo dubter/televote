@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/vote"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/vote"
 )
 
 // errorResponse — единый формат ошибки. Код совпадает с текстом доменной

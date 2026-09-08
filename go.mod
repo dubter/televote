@@ -1,4 +1,4 @@
-module github.com/OWNER/televote
+module github.com/dubter/televote
 
 go 1.26.0
 

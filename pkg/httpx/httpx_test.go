@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/pkg/httpx"
+	"github.com/dubter/televote/pkg/httpx"
 )
 
 func mustPrefixes(tb testing.TB, cidrs ...string) []netip.Prefix {

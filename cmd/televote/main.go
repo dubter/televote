@@ -19,8 +19,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/OWNER/televote/internal/config"
-	"github.com/OWNER/televote/pkg/health"
+	"github.com/dubter/televote/internal/config"
+	"github.com/dubter/televote/pkg/health"
 )
 
 // version подставляется линкером: -ldflags "-X main.version=…".

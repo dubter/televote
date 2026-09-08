@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/rueidis"
 
-	"github.com/OWNER/televote/internal/domain"
+	"github.com/dubter/televote/internal/domain"
 )
 
 // Result — исход применения голоса.

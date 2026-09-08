@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/OWNER/televote/internal/domain"
+	"github.com/dubter/televote/internal/domain"
 )
 
 // Ошибки сборки кэша. Полуготовый кэш хуже отказа: он тихо отдаёт пустой

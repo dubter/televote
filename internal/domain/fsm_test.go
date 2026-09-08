@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/OWNER/televote/internal/domain"
+	"github.com/dubter/televote/internal/domain"
 )
 
 // allStatuses — полный набор статусов плюс заведомо несуществующий:

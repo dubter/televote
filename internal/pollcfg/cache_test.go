@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/pollcfg"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/pollcfg"
 )
 
 // errRepoDown — отказ источника конфига. Отдельная переменная, а не строка на

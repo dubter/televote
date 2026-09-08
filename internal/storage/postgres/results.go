@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/OWNER/televote/internal/domain"
+	"github.com/dubter/televote/internal/domain"
 )
 
 // ResultRepo — агрегат результатов: монотонный процесс подсчёта и публикуемый

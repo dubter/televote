@@ -13,9 +13,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/OWNER/televote/internal/auth"
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/storage/postgres"
+	"github.com/dubter/televote/internal/auth"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/storage/postgres"
 )
 
 // PollStore — то, что админке нужно от хранилища опросов.

@@ -11,16 +11,16 @@ import (
 	"github.com/redis/rueidis"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/OWNER/televote/internal/auth"
-	"github.com/OWNER/televote/internal/config"
-	"github.com/OWNER/televote/internal/consumer"
-	"github.com/OWNER/televote/internal/httpapi"
-	"github.com/OWNER/televote/internal/pollcfg"
-	"github.com/OWNER/televote/internal/producer"
-	"github.com/OWNER/televote/internal/snapshot"
-	"github.com/OWNER/televote/internal/storage/postgres"
-	"github.com/OWNER/televote/internal/vote"
-	"github.com/OWNER/televote/pkg/health"
+	"github.com/dubter/televote/internal/auth"
+	"github.com/dubter/televote/internal/config"
+	"github.com/dubter/televote/internal/consumer"
+	"github.com/dubter/televote/internal/httpapi"
+	"github.com/dubter/televote/internal/pollcfg"
+	"github.com/dubter/televote/internal/producer"
+	"github.com/dubter/televote/internal/snapshot"
+	"github.com/dubter/televote/internal/storage/postgres"
+	"github.com/dubter/televote/internal/vote"
+	"github.com/dubter/televote/pkg/health"
 )
 
 // role — что делает процесс. В проде это разные деплойменты: приём

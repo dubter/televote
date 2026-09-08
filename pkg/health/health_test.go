@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/pkg/health"
+	"github.com/dubter/televote/pkg/health"
 )
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {

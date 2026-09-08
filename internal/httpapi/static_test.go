@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/httpapi"
+	"github.com/dubter/televote/internal/httpapi"
 )
 
 func fetchPage(t *testing.T, path string) *httptest.ResponseRecorder {

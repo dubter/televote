@@ -16,11 +16,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/httpapi"
-	"github.com/OWNER/televote/internal/pollcfg"
-	"github.com/OWNER/televote/internal/producer"
-	"github.com/OWNER/televote/pkg/httpx"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/httpapi"
+	"github.com/dubter/televote/internal/pollcfg"
+	"github.com/dubter/televote/internal/producer"
+	"github.com/dubter/televote/pkg/httpx"
 )
 
 var testSalt = []byte("test-poll-salt-0123456789abcdef!")

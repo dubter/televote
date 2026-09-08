@@ -17,7 +17,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // драйвер database/sql для pgx
 	"github.com/pressly/goose/v3"
 
-	"github.com/OWNER/televote/migrations"
+	"github.com/dubter/televote/migrations"
 )
 
 func main() {

@@ -10,7 +10,7 @@ import (
 	"github.com/riandyrn/otelchi"
 	"github.com/rs/cors"
 
-	"github.com/OWNER/televote/pkg/httpx"
+	"github.com/dubter/televote/pkg/httpx"
 )
 
 // RouterConfig — то, что роутеру нужно снаружи.

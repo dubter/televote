@@ -11,12 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/pkg/httpx"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/pkg/httpx"
 
-	"github.com/OWNER/televote/internal/pollcfg"
-	"github.com/OWNER/televote/internal/producer"
-	"github.com/OWNER/televote/internal/vote"
+	"github.com/dubter/televote/internal/pollcfg"
+	"github.com/dubter/televote/internal/producer"
+	"github.com/dubter/televote/internal/vote"
 )
 
 // maxVoteBody — голос это десятки байт. Всё, что заметно больше, либо мусор,

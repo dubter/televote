@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/pollcfg"
-	"github.com/OWNER/televote/internal/producer"
-	"github.com/OWNER/televote/internal/vote"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/pollcfg"
+	"github.com/dubter/televote/internal/producer"
+	"github.com/dubter/televote/internal/vote"
 )
 
 var (

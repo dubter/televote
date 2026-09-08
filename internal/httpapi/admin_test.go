@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/OWNER/televote/internal/auth"
-	"github.com/OWNER/televote/internal/domain"
-	"github.com/OWNER/televote/internal/httpapi"
-	"github.com/OWNER/televote/internal/storage/postgres"
+	"github.com/dubter/televote/internal/auth"
+	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/httpapi"
+	"github.com/dubter/televote/internal/storage/postgres"
 )
 
 var adminKey = []byte("admin-test-key-0123456789abcdef!")

@@ -122,4 +122,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/OWNER/televote
+        - github.com/dubter/televote
