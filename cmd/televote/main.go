@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/OWNER/televote/internal/config"
 	"github.com/OWNER/televote/internal/observability"
 )
@@ -23,7 +26,13 @@ import (
 // version подставляется линкером: -ldflags "-X main.version=…".
 var version = "dev"
 
+// roleFlag выбирает, что делает процесс: в проде приём и консьюмеры
+// масштабируются под разные графики нагрузки и живут в разных деплойментах.
+var roleFlag = flag.String("role", string(roleAll), "роль процесса: api | consumer | all")
+
 func main() {
+	flag.Parse()
+
 	if err := run(context.Background()); err != nil {
 		// Логгер к этому моменту может быть ещё не настроен — стандартного хватит,
 		// важно, чтобы причина отказа старта дошла до stderr целиком.
@@ -47,7 +56,7 @@ func run(ctx context.Context) error {
 		slog.String("http_addr", cfg.HTTPAddr),
 		slog.Int("redis_nodes", len(cfg.RedisAddrs)),
 		slog.String("dedup_ttl_lower_bound", cfg.DedupTTLLowerBound().String()),
-		slog.String("ballot_lifetime", cfg.BallotLifetime().String()),
+		slog.String("drain_budget", cfg.DrainBudget().String()),
 	)
 	if cfg.UsesInsecureDefaults() {
 		// В production Load() до этого места не доходит — там это ошибка старта.
@@ -58,14 +67,23 @@ func run(ctx context.Context) error {
 	// чем сервер начнёт закрывать соединения.
 	gate := observability.NewGate()
 
+	application, err := buildApp(ctx, cfg, logger, role(*roleFlag))
+	if err != nil {
+		return fmt.Errorf("сборка приложения: %w", err)
+	}
+	defer application.Close()
+
 	// Health обязан работать, даже когда всё остальное сломано, поэтому висит
 	// на корневом mux до и независимо от прикладного роутера.
-	health := observability.Handler(nil, readinessChecks(gate))
+	health := observability.Handler(nil, append(application.readiness(), gate.Checker()))
 
 	mux := http.NewServeMux()
 	mux.Handle("/livez", health)
 	mux.Handle("/readyz", health)
-	// Сюда T8 монтирует публичный API, T10 — админку, T12 — статику.
+	mux.Handle("/metrics", promhttp.Handler())
+	if application.router != nil {
+		mux.Handle("/", application.router)
+	}
 
 	srv := newServer(ctx, cfg, logger, cfg.HTTPAddr, mux)
 
@@ -88,8 +106,10 @@ func run(ctx context.Context) error {
 		}()
 	}
 
-	// Здесь T5 вызывает pollcfg.Cache.Warm(ctx) до открытия трафика:
-	// холодный кэш конфига не имеет права принимать голоса.
+	// Кэш конфигов прогрет внутри buildApp — до этой точки инстанс трафика
+	// не получает.
+	application.runBackground(sigCtx)
+
 	gate.SetReady(true)
 	logger.Info("готов принимать трафик")
 
@@ -127,12 +147,6 @@ func run(ctx context.Context) error {
 	}
 	logger.Info("остановлен штатно")
 	return nil
-}
-
-// readinessChecks собирает проверки для /readyz.
-// T11 добавляет сюда реальные PING в Redis и Postgres, T5 — свежесть кэша конфига.
-func readinessChecks(gate *observability.Gate) []observability.Checker {
-	return []observability.Checker{gate.Checker()}
 }
 
 // newServer собирает http.Server со всеми таймаутами.

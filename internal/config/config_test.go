@@ -19,8 +19,9 @@ import (
 // Всё остальное обязано подставиться дефолтами, совпадающими с .env.example.
 func minimalEnv() map[string]string {
 	return map[string]string{
-		"REDIS_ADDRS":  "redis-1:6379,redis-2:6379",
-		"POSTGRES_DSN": "postgres://u:p@localhost:5432/televote?sslmode=disable",
+		"REDIS_ADDRS":   "redis-1:6379,redis-2:6379",
+		"KAFKA_BROKERS": "kafka:9092",
+		"POSTGRES_DSN":  "postgres://u:p@localhost:5432/televote?sslmode=disable",
 	}
 }
 
@@ -42,8 +43,6 @@ func productionEnv() map[string]string {
 		"ENV":                      "production",
 		"POSTGRES_DSN":             "postgres://app:s3cret@pg-primary:5432/televote?sslmode=verify-full",
 		"POSTGRES_READ_DSN":        "postgres://app:s3cret@pg-replica:5432/televote?sslmode=verify-full",
-		"BALLOT_KEY_CURRENT":       strings.Repeat("a1", 32),
-		"BALLOT_KEY_PREVIOUS":      strings.Repeat("b2", 32),
 		"ADMIN_JWT_KEY":            strings.Repeat("c3", 32),
 		"ADMIN_BOOTSTRAP_PASSWORD": "not-a-default-password",
 	})
@@ -77,9 +76,11 @@ func TestLoad_DefaultsMatchEnvExample(t *testing.T) {
 	assert.Equal(t, int32(20), cfg.PostgresMaxConns)
 	assert.Equal(t, 2*time.Second, cfg.PollConfigRefresh)
 
-	assert.Equal(t, uint8(1), cfg.BallotActiveKeyID)
-	assert.Equal(t, 15*time.Minute, cfg.BallotTTL)
-	assert.Equal(t, 60*time.Second, cfg.BallotClockSkew)
+	assert.Equal(t, []string{"kafka:9092"}, cfg.KafkaBrokers)
+	assert.Equal(t, "votes", cfg.KafkaTopic)
+	assert.NotEqual(t, cfg.KafkaConsumerGroup, cfg.KafkaFraudGroup,
+		"анализ обязан читать топик независимо от подсчёта")
+	assert.Equal(t, 5*time.Millisecond, cfg.KafkaLinger)
 
 	assert.Equal(t, 30*time.Minute, cfg.DedupTTL)
 	assert.InDelta(t, 0.1, cfg.DedupTTLJitter, 1e-9)
@@ -87,7 +88,6 @@ func TestLoad_DefaultsMatchEnvExample(t *testing.T) {
 	assert.Equal(t, 6000, cfg.RateLimitPerMin)
 	assert.Equal(t, 200, cfg.RateLimitBurst)
 	assert.Equal(t, 200000, cfg.RateLimitMaxKeys)
-	assert.Equal(t, 600, cfg.BallotRateLimitPerMin)
 
 	assert.True(t, cfg.ASNBlockEnabled)
 	assert.InDelta(t, 0.01, cfg.AnomalySampleRate, 1e-9)
@@ -141,16 +141,6 @@ func TestLoad_ProductionRejectsDefaultCredentials(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name:      "дефолтный ballot-ключ из .env.example",
-			overrides: map[string]string{"BALLOT_KEY_CURRENT": "CHANGE_ME_0000000000000000000000000000000000000000000000000000000000"},
-			wantErr:   "BALLOT_KEY_CURRENT",
-		},
-		{
-			name:      "дефолтный предыдущий ballot-ключ",
-			overrides: map[string]string{"BALLOT_KEY_PREVIOUS": "CHANGE_ME_1111111111111111111111111111111111111111111111111111111111"},
-			wantErr:   "BALLOT_KEY_PREVIOUS",
-		},
-		{
 			name:      "дефолтный ключ админского JWT",
 			overrides: map[string]string{"ADMIN_JWT_KEY": "CHANGE_ME_2222222222222222222222222222222222222222222222222222222222"},
 			wantErr:   "ADMIN_JWT_KEY",
@@ -174,11 +164,6 @@ func TestLoad_ProductionRejectsDefaultCredentials(t *testing.T) {
 			name:      "дефолтные креды у реплики",
 			overrides: map[string]string{"POSTGRES_READ_DSN": "postgres://televote:televote@postgres:5432/televote?sslmode=disable"},
 			wantErr:   "POSTGRES_READ_DSN",
-		},
-		{
-			name:      "ballot-ключ не 32 байта hex",
-			overrides: map[string]string{"BALLOT_KEY_CURRENT": "deadbeef"},
-			wantErr:   "BALLOT_KEY_CURRENT",
 		},
 	}
 
@@ -220,8 +205,6 @@ func TestLoad_DevAcceptsPlaceholderSecrets(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := config.LoadFrom(envWith(map[string]string{
-		"BALLOT_KEY_CURRENT":       "CHANGE_ME_0000000000000000000000000000000000000000000000000000000000",
-		"BALLOT_KEY_PREVIOUS":      "CHANGE_ME_1111111111111111111111111111111111111111111111111111111111",
 		"ADMIN_JWT_KEY":            "CHANGE_ME_2222222222222222222222222222222222222222222222222222222222",
 		"ADMIN_BOOTSTRAP_PASSWORD": "dev-only-change-me",
 		"POSTGRES_DSN":             "postgres://televote:televote@postgres:5432/televote?sslmode=disable",
@@ -235,23 +218,29 @@ func TestLoad_DevAcceptsPlaceholderSecrets(t *testing.T) {
 // Первый пункт таблицы тихих отказов в CLAUDE.md: ключ дедупа, истекающий
 // раньше токена, открывает окно для replay. Проверяем с учётом джиттера —
 // эффективный TTL уходит вниз на DEDUP_TTL_JITTER.
-func TestLoad_DedupTTLMustOutliveBallotToken(t *testing.T) {
+// Дедуп-ключ создаёт консьюмер, а не приём. Два сообщения одного голосующего
+// могут быть обработаны в начале и в конце дренажа, и ключ обязан пережить
+// этот разрыв: иначе второй голос будет засчитан как первый, тихо и без ошибок.
+//
+// Проверка идёт по НИЖНЕЙ границе джиттера, а не по номиналу: DEDUP_TTL=11m
+// при джиттере 0.1 даёт ключи, живущие 9.9 минуты, тогда как дренаж рассчитан
+// на 10.5 — и полминуты хватает, чтобы дедуп разошёлся.
+func TestLoad_DedupTTLMustOutliveDrainWindow(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		dedupTTL  string
-		ballotTTL string
-		skew      string
-		jitter    string
-		wantErr   bool
+		name     string
+		dedupTTL string
+		grace    string
+		jitter   string
+		wantErr  bool
 	}{
-		{name: "дефолты держат инвариант", dedupTTL: "30m", ballotTTL: "15m", skew: "60s", jitter: "0.1"},
-		{name: "ровно на границе без джиттера", dedupTTL: "16m", ballotTTL: "15m", skew: "60s", jitter: "0"},
-		{name: "на минуту короче токена", dedupTTL: "14m", ballotTTL: "15m", skew: "60s", jitter: "0", wantErr: true},
-		{name: "равен TTL токена, но забыт skew", dedupTTL: "15m", ballotTTL: "15m", skew: "60s", jitter: "0", wantErr: true},
-		{name: "джиттер уводит нижнюю границу под токен", dedupTTL: "16m", ballotTTL: "15m", skew: "60s", jitter: "0.1", wantErr: true},
-		{name: "джиттер учтён запасом", dedupTTL: "30m", ballotTTL: "20m", skew: "60s", jitter: "0.1"},
+		{name: "дефолты держат инвариант", dedupTTL: "30m", grace: "30s", jitter: "0.1"},
+		{name: "ровно на границе без джиттера", dedupTTL: "10m30s", grace: "30s", jitter: "0"},
+		{name: "короче окна дренажа", dedupTTL: "5m", grace: "30s", jitter: "0", wantErr: true},
+		{name: "джиттер уводит нижнюю границу под дренаж", dedupTTL: "11m", grace: "30s", jitter: "0.1", wantErr: true},
+		{name: "длинный grace требует длинного TTL", dedupTTL: "12m", grace: "5m", jitter: "0", wantErr: true},
+		{name: "джиттер учтён запасом", dedupTTL: "30m", grace: "5m", jitter: "0.1"},
 	}
 
 	for _, tt := range tests {
@@ -259,10 +248,9 @@ func TestLoad_DedupTTLMustOutliveBallotToken(t *testing.T) {
 			t.Parallel()
 
 			cfg, err := config.LoadFrom(envWith(map[string]string{
-				"DEDUP_TTL":         tt.dedupTTL,
-				"BALLOT_TTL":        tt.ballotTTL,
-				"BALLOT_CLOCK_SKEW": tt.skew,
-				"DEDUP_TTL_JITTER":  tt.jitter,
+				"DEDUP_TTL":            tt.dedupTTL,
+				"SNAPSHOT_FINAL_GRACE": tt.grace,
+				"DEDUP_TTL_JITTER":     tt.jitter,
 			}))
 
 			if tt.wantErr {
@@ -296,7 +284,7 @@ func TestLoad_RejectsInvalidValues(t *testing.T) {
 		{name: "доля сэмплирования трейсов больше единицы", overrides: map[string]string{"OTEL_TRACE_SAMPLE_RATIO": "1.5"}, wantErr: "OTEL_TRACE_SAMPLE_RATIO"},
 		{name: "доля сэмплирования аномалий больше единицы", overrides: map[string]string{"ANOMALY_SAMPLE_RATE": "2"}, wantErr: "ANOMALY_SAMPLE_RATE"},
 		{name: "порог брейкера вне (0,1]", overrides: map[string]string{"BREAKER_ERROR_RATIO": "0"}, wantErr: "BREAKER_ERROR_RATIO"},
-		{name: "неизвестный id активного ключа", overrides: map[string]string{"BALLOT_ACTIVE_KEY_ID": "3"}, wantErr: "BALLOT_ACTIVE_KEY_ID"},
+		{name: "группа анализа совпадает с группой подсчёта", overrides: map[string]string{"KAFKA_FRAUD_GROUP": "televote-counting"}, wantErr: "KAFKA_FRAUD_GROUP"},
 		{name: "нулевой пул Postgres", overrides: map[string]string{"POSTGRES_MAX_CONNS": "0"}, wantErr: "POSTGRES_MAX_CONNS"},
 		{name: "нулевой интервал рефрешера конфига", overrides: map[string]string{"POLL_CONFIG_REFRESH": "0s"}, wantErr: "POLL_CONFIG_REFRESH"},
 		{name: "нулевой интервал снапшотов", overrides: map[string]string{"SNAPSHOT_INTERVAL": "0s"}, wantErr: "SNAPSHOT_INTERVAL"},
@@ -379,46 +367,28 @@ func TestLoad_ParsesTrustedProxiesAsPrefixes(t *testing.T) {
 	assert.True(t, cfg.TrustedProxies[2].Contains(mustAddr(t, "2001:db8::1")))
 }
 
-func TestBallotKeys_DecodeAndDerive(t *testing.T) {
+func TestKafkaConfig_Validation(t *testing.T) {
 	t.Parallel()
 
-	t.Run("hex-ключи декодируются как есть", func(t *testing.T) {
+	t.Run("группы подсчёта и анализа обязаны различаться", func(t *testing.T) {
 		t.Parallel()
 
-		cfg, err := config.LoadFrom(envWith(map[string]string{
-			"BALLOT_KEY_CURRENT":  strings.Repeat("ab", 32),
-			"BALLOT_KEY_PREVIOUS": strings.Repeat("cd", 32),
+		// Одна группа означала бы, что анализ забирает сообщения у подсчёта:
+		// Kafka делит партиции между членами группы, а не дублирует их.
+		_, err := config.LoadFrom(envWith(map[string]string{
+			"KAFKA_CONSUMER_GROUP": "same",
+			"KAFKA_FRAUD_GROUP":    "same",
 		}))
-		require.NoError(t, err)
-
-		keys, err := cfg.BallotKeys()
-		require.NoError(t, err)
-		assert.Equal(t, byte(0xab), keys[0][0])
-		assert.Equal(t, byte(0xcd), keys[1][0])
-		assert.NotEqual(t, keys[0], keys[1])
+		require.Error(t, err)
 	})
 
-	t.Run("плейсхолдеры детерминированно выводятся в dev", func(t *testing.T) {
+	t.Run("Kafka без брокеров не даёт стартовать", func(t *testing.T) {
 		t.Parallel()
 
-		e := envWith(map[string]string{
-			"BALLOT_KEY_CURRENT":  "CHANGE_ME_0000000000000000000000000000000000000000000000000000000000",
-			"BALLOT_KEY_PREVIOUS": "CHANGE_ME_1111111111111111111111111111111111111111111111111111111111",
-		})
-
-		first, err := config.LoadFrom(e)
-		require.NoError(t, err)
-		second, err := config.LoadFrom(e)
-		require.NoError(t, err)
-
-		k1, err := first.BallotKeys()
-		require.NoError(t, err)
-		k2, err := second.BallotKeys()
-		require.NoError(t, err)
-
-		assert.Equal(t, k1, k2, "два инстанса на одном .env обязаны принимать токены друг друга")
-		assert.NotEqual(t, k1[0], k1[1])
-		assert.NotEqual(t, [32]byte{}, k1[0])
+		// Приём голосов идёт только через Kafka: без брокеров инстанс не
+		// примет ни одного голоса, и падать надо на старте, а не в эфире.
+		_, err := config.LoadFrom(envWith(map[string]string{"KAFKA_BROKERS": ""}))
+		require.Error(t, err)
 	})
 }
 

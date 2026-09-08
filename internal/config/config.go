@@ -115,11 +115,12 @@ type Config struct {
 	// ─── ballot-токены ───
 	// Два ключа: подписываем текущим, проверяем обоими. Иначе ротация в эфире
 	// инвалидирует все выданные токены разом.
-	BallotKeyCurrent  string        `env:"BALLOT_KEY_CURRENT"`
-	BallotKeyPrevious string        `env:"BALLOT_KEY_PREVIOUS"`
-	BallotActiveKeyID uint8         `env:"BALLOT_ACTIVE_KEY_ID" envDefault:"1"`
-	BallotTTL         time.Duration `env:"BALLOT_TTL" envDefault:"15m"`
-	BallotClockSkew   time.Duration `env:"BALLOT_CLOCK_SKEW" envDefault:"60s"`
+	KafkaBrokers        []string      `env:"KAFKA_BROKERS" envSeparator:","`
+	KafkaTopic          string        `env:"KAFKA_TOPIC" envDefault:"votes"`
+	KafkaConsumerGroup  string        `env:"KAFKA_CONSUMER_GROUP" envDefault:"televote-counting"`
+	KafkaFraudGroup     string        `env:"KAFKA_FRAUD_GROUP" envDefault:"televote-fraud"`
+	KafkaLinger         time.Duration `env:"KAFKA_LINGER" envDefault:"5ms"`
+	KafkaProduceTimeout time.Duration `env:"KAFKA_PRODUCE_TIMEOUT" envDefault:"2s"`
 
 	// ─── дедупликация ───
 	DedupTTL time.Duration `env:"DEDUP_TTL" envDefault:"30m"`
@@ -127,10 +128,9 @@ type Config struct {
 	DedupTTLJitter float64 `env:"DEDUP_TTL_JITTER" envDefault:"0.1"`
 
 	// ─── rate limit ───
-	RateLimitPerMin       int `env:"RATE_LIMIT_PER_MIN" envDefault:"6000"`
-	RateLimitBurst        int `env:"RATE_LIMIT_BURST" envDefault:"200"`
-	RateLimitMaxKeys      int `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
-	BallotRateLimitPerMin int `env:"BALLOT_RATE_LIMIT_PER_MIN" envDefault:"600"`
+	RateLimitPerMin  int `env:"RATE_LIMIT_PER_MIN" envDefault:"6000"`
+	RateLimitBurst   int `env:"RATE_LIMIT_BURST" envDefault:"200"`
+	RateLimitMaxKeys int `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
 	// TrustedProxies — X-Forwarded-For принимается только от этих адресов.
 	// Иначе лимит обходится одной строкой в curl.
 	TrustedProxies []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
@@ -219,7 +219,6 @@ func (c *Config) DebugEnabled() bool {
 // main.go обязан написать предупреждение в лог.
 func (c *Config) UsesInsecureDefaults() bool {
 	for _, v := range []string{
-		c.BallotKeyCurrent, c.BallotKeyPrevious,
 		c.AdminJWTKey, c.AdminBootstrapPassword,
 	} {
 		if isPlaceholderSecret(v) {
@@ -229,47 +228,28 @@ func (c *Config) UsesInsecureDefaults() bool {
 	return dsnHasDefaultCredentials(c.PostgresDSN) || dsnHasDefaultCredentials(c.PostgresReadDSN)
 }
 
-// BallotKeys отдаёт пару ключей HMAC: [0] — текущий, [1] — предыдущий.
-//
-// В production Load() уже потребовал 64 hex-символа. В dev значения из
-// .env.example — плейсхолдеры, и вместо отказа стартовать они детерминированно
-// сворачиваются в ключ: `make demo` обязан работать без ручной генерации
-// секретов, а два инстанса на одном .env обязаны принимать токены друг друга.
-func (c *Config) BallotKeys() ([2][32]byte, error) {
-	var keys [2][32]byte
-
-	for i, raw := range [2]string{c.BallotKeyCurrent, c.BallotKeyPrevious} {
-		key, err := decodeOrDeriveKey(raw, fmt.Sprintf("televote-dev-ballot-key-%d", i))
-		if err != nil {
-			name := "BALLOT_KEY_CURRENT"
-			if i == 1 {
-				name = "BALLOT_KEY_PREVIOUS"
-			}
-			return keys, &FieldError{Key: name, Reason: err.Error(), sentinel: ErrInsecureDefault}
-		}
-		keys[i] = key
-	}
-
-	if keys[0] == keys[1] {
-		return keys, &FieldError{
-			Key:      "BALLOT_KEY_PREVIOUS",
-			Reason:   "совпадает с BALLOT_KEY_CURRENT — ротация ключа обесценена",
-			sentinel: ErrInsecureDefault,
-		}
-	}
-	return keys, nil
-}
-
 // DedupTTLLowerBound — наименьший TTL, который может выдать джиттер.
-// Именно он, а не номинальный DedupTTL, обязан перекрывать жизнь токена.
+// Именно он, а не номинальный DedupTTL, обязан перекрывать окно дренажа.
 func (c *Config) DedupTTLLowerBound() time.Duration {
 	return time.Duration(float64(c.DedupTTL) * (1 - c.DedupTTLJitter))
 }
 
-// BallotLifetime — предельный возраст токена, который сервис ещё принимает.
-func (c *Config) BallotLifetime() time.Duration {
-	return c.BallotTTL + c.BallotClockSkew
+// DrainBudget — сколько времени отводится на дренаж, с запасом.
+//
+// Дедуп-ключ создаёт консьюмер, а не приём: два сообщения одного человека
+// могут быть обработаны в начале и в конце дренажа, и ключ обязан пережить
+// этот разрыв. Иначе второй голос будет засчитан как первый.
+func (c *Config) DrainBudget() time.Duration {
+	return c.SnapshotFinalGrace + drainSafetyMargin
 }
+
+// drainSafetyMargin — запас поверх grace-периода.
+//
+// Дренаж рассчитан примерно на пять минут, но может затянуться при отставании
+// консьюмеров или медленном Redis. Десять минут дают двукратный запас и при
+// дефолтном DEDUP_TTL=30m оставляют ещё почти трёхкратный сверху — так
+// инвариант выполняется без подгонки чисел друг под друга.
+const drainSafetyMargin = 10 * time.Minute
 
 //nolint:gocyclo,gocognit // это один список правил; разбиение на функции здесь только прячет его.
 func (c *Config) validate() error {
@@ -365,16 +345,22 @@ func (c *Config) validate() error {
 		fail("POLL_CONFIG_REFRESH", "должен быть положительным: горячий путь читает только память")
 	}
 
-	// ─── ballot и дедуп ───
-	if c.BallotActiveKeyID != 1 && c.BallotActiveKeyID != 2 {
-		fail("BALLOT_ACTIVE_KEY_ID", "ожидается 1 или 2, получено %d", c.BallotActiveKeyID)
+	// ─── Kafka ───
+	if len(c.KafkaBrokers) == 0 {
+		fail("KAFKA_BROKERS", "нужен хотя бы один брокер: приём голосов идёт только через Kafka")
 	}
-	if c.BallotTTL <= 0 {
-		fail("BALLOT_TTL", "должен быть положительным")
+	if c.KafkaTopic == "" {
+		fail("KAFKA_TOPIC", "не задан")
 	}
-	if c.BallotClockSkew < 0 {
-		fail("BALLOT_CLOCK_SKEW", "не может быть отрицательным")
+	if c.KafkaConsumerGroup == "" || c.KafkaFraudGroup == "" {
+		fail("KAFKA_CONSUMER_GROUP", "группы подсчёта и анализа обязаны быть заданы")
 	}
+	if c.KafkaConsumerGroup == c.KafkaFraudGroup {
+		fail("KAFKA_FRAUD_GROUP",
+			"совпадает с группой подсчёта: анализ обязан читать топик независимо, иначе он крадёт сообщения у подсчёта")
+	}
+
+	// ─── дедуп ───
 	if c.DedupTTL <= 0 {
 		fail("DEDUP_TTL", "должен быть положительным")
 	}
@@ -391,9 +377,6 @@ func (c *Config) validate() error {
 	}
 	if c.RateLimitMaxKeys <= 0 {
 		fail("RATE_LIMIT_MAX_KEYS", "должен быть положительным: таблица лимитера обязана быть ограничена")
-	}
-	if c.BallotRateLimitPerMin <= 0 {
-		fail("BALLOT_RATE_LIMIT_PER_MIN", "должен быть положительным")
 	}
 
 	// ─── антинакрутка и наблюдаемость ───
@@ -442,19 +425,19 @@ func (c *Config) validate() error {
 // джиттере 0.1 даёт ключи, живущие 14.4 минуты, тогда как токен принимается
 // 16 минут — и полутора минут хватает, чтобы переголосовать тем же токеном.
 func (c *Config) validateDedupInvariant() error {
-	if c.DedupTTL <= 0 || c.BallotTTL <= 0 {
+	if c.DedupTTL <= 0 || c.SnapshotFinalGrace <= 0 {
 		return nil // о нулевых значениях уже сообщено отдельно
 	}
 
-	lower, need := c.DedupTTLLowerBound(), c.BallotLifetime()
+	lower, need := c.DedupTTLLowerBound(), c.DrainBudget()
 	if lower >= need {
 		return nil
 	}
 	return &FieldError{
 		Key: "DEDUP_TTL",
 		Reason: fmt.Sprintf(
-			"нижняя граница с джиттером %s (%s × (1−%v)) короче жизни токена %s (BALLOT_TTL=%s + BALLOT_CLOCK_SKEW=%s) — открыто окно для replay",
-			lower, c.DedupTTL, c.DedupTTLJitter, need, c.BallotTTL, c.BallotClockSkew),
+			"нижняя граница с джиттером %s (%s × (1−%v)) короче окна дренажа %s — ключ истечёт между сообщениями одного голосующего, и повторный голос будет засчитан",
+			lower, c.DedupTTL, c.DedupTTLJitter, need),
 		sentinel: ErrDedupTTLTooShort,
 	}
 }
@@ -471,25 +454,6 @@ func (c *Config) validateProductionSecrets() []error {
 		errs = append(errs, &FieldError{
 			Key: key, Reason: fmt.Sprintf(format, args...), sentinel: ErrInsecureDefault,
 		})
-	}
-
-	for _, k := range []struct{ key, val string }{
-		{"BALLOT_KEY_CURRENT", c.BallotKeyCurrent},
-		{"BALLOT_KEY_PREVIOUS", c.BallotKeyPrevious},
-	} {
-		switch {
-		case k.val == "":
-			insecure(k.key, "обязателен в production")
-		case isPlaceholderSecret(k.val):
-			insecure(k.key, "оставлен дефолт из .env.example")
-		default:
-			if _, err := decodeHexKey(k.val); err != nil {
-				insecure(k.key, "%s", err.Error())
-			}
-		}
-	}
-	if c.BallotKeyCurrent != "" && c.BallotKeyCurrent == c.BallotKeyPrevious {
-		insecure("BALLOT_KEY_PREVIOUS", "совпадает с BALLOT_KEY_CURRENT — ротация ключа обесценена")
 	}
 
 	switch {
