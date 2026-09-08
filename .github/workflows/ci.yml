@@ -26,7 +26,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-      - uses: golangci/golangci-lint-action@v6
+      # v6 не умеет golangci-lint v2: конфиг второй схемы он читать не может.
+      - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.2
           args: --timeout=5m
