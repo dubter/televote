@@ -3,16 +3,20 @@ updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     groups:
       otel:
         patterns: ["go.opentelemetry.io/*"]
+      testing:
+        patterns: ["github.com/stretchr/*", "github.com/testcontainers/*"]
+
+  # Одним PR: пять отдельных обновлений экшенов — шум, а не польза.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
