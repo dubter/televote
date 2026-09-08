@@ -31,11 +31,18 @@ type Role string
 const (
 	RoleAPI      Role = "api"
 	RoleConsumer Role = "consumer"
+	RoleSnapshot Role = "snapshot"
 	RoleAll      Role = "all"
 )
 
 func (r Role) servesHTTP() bool { return r == RoleAPI || r == RoleAll }
 func (r Role) consumes() bool   { return r == RoleConsumer || r == RoleAll }
+
+// Снапшотер держится в одном экземпляре: fan-in по всем шардам не зависит от
+// нагрузки, и N реплик просто повторяли бы одну и ту же работу N раз.
+func (r Role) snapshots() bool { return r == RoleSnapshot || r == RoleAll }
+
+func (r Role) needsRedis() bool { return r.consumes() || r.snapshots() }
 
 type app struct {
 	cfg    *config.Config
@@ -86,7 +93,7 @@ func (a *app) connectStores(ctx context.Context) error {
 		return fmt.Errorf("postgres (чтение): %w", err)
 	}
 
-	if a.role.consumes() {
+	if a.role.needsRedis() {
 		a.redis, err = rueidis.NewClient(rueidis.ClientOption{
 			InitAddress:  a.cfg.RedisAddrs,
 			Dialer:       netDialer(a.cfg.RedisDialTimeout),
@@ -110,15 +117,20 @@ func (a *app) connectStores(ctx context.Context) error {
 		}
 	}
 
-	if a.role.consumes() {
-		a.kafka, err = kgo.NewClient(
+	if a.role.needsRedis() {
+		opts := []kgo.Opt{
 			kgo.SeedBrokers(a.cfg.KafkaBrokers...),
-			kgo.ConsumeTopics(a.cfg.KafkaTopic),
 			kgo.ConsumerGroup(a.cfg.KafkaConsumerGroup),
 			kgo.DisableAutoCommit(),
-		)
+		}
+		// Снапшотер читает лаг группы через admin API и сам сообщения не берёт:
+		// подпишись он на топик, он отобрал бы партиции у подсчёта.
+		if a.role.consumes() {
+			opts = append(opts, kgo.ConsumeTopics(a.cfg.KafkaTopic))
+		}
+		a.kafka, err = kgo.NewClient(opts...)
 		if err != nil {
-			return fmt.Errorf("kafka consumer: %w", err)
+			return fmt.Errorf("kafka: %w", err)
 		}
 	}
 	return nil
@@ -138,7 +150,7 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("прогрев кэша конфигов: %w", err)
 	}
 
-	if !a.role.consumes() {
+	if !a.role.needsRedis() {
 		return nil
 	}
 
@@ -147,9 +159,15 @@ func (a *app) buildDomainServices(ctx context.Context) error {
 		return fmt.Errorf("применение голосов: %w", err)
 	}
 
-	a.counting, err = consumer.NewCounting(a.kafka, caster, a.cache, countingObserver{a.metrics}, a.log)
-	if err != nil {
-		return fmt.Errorf("консьюмер подсчёта: %w", err)
+	if a.role.consumes() {
+		a.counting, err = consumer.NewCounting(a.kafka, caster, a.cache, countingObserver{a.metrics}, a.log)
+		if err != nil {
+			return fmt.Errorf("консьюмер подсчёта: %w", err)
+		}
+	}
+
+	if !a.role.snapshots() {
+		return nil
 	}
 
 	pollsWrite, err := postgres.NewPollRepo(a.pgWrite.pool)
