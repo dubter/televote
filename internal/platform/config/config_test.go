@@ -298,10 +298,10 @@ func TestLoad_ParsesTrustedProxiesAsPrefixes(t *testing.T) {
 func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join("..", "..", ".env.example")
+	path := filepath.Join("..", "..", "..", ".env.example")
 	f, err := os.Open(path) //nolint:gosec // fixed path inside the repository
 	if err != nil {
-		t.Skipf("%s недоступен: %v", path, err)
+		t.Fatalf("%s is unreadable: %v", path, err)
 	}
 	t.Cleanup(func() { _ = f.Close() })
 
@@ -338,6 +338,28 @@ func TestConfig_CoversEveryVariableInEnvExample(t *testing.T) {
 	require.NoError(t, sc.Err())
 
 	assert.Empty(t, missing, "переменные из .env.example не покрыты config.Config: %v", missing)
+}
+
+func TestConfig_EnvExampleLoadsAsIs(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", "..", "..", ".env.example")
+	body, err := os.ReadFile(path) //nolint:gosec // fixed path inside the repository
+	require.NoError(t, err)
+
+	environ := map[string]string{}
+	for line := range strings.SplitSeq(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if name, value, ok := strings.Cut(line, "="); ok {
+			environ[strings.TrimSpace(name)] = strings.Trim(strings.TrimSpace(value), `"`)
+		}
+	}
+
+	_, err = config.LoadFrom(environ)
+	assert.NoError(t, err, "пример конфигурации обязан запускаться как есть")
 }
 
 func mustAddr(t *testing.T, s string) netip.Addr {
