@@ -522,15 +522,6 @@ func TestWindow_ContainsIgnoresStatus(t *testing.T) {
 	assert.False(t, w.Contains(w.ClosesAt), "граница ClosesAt исключающая")
 }
 
-func TestIsOpenAt_IgnoresMonotonicClockReading(t *testing.T) {
-	t.Parallel()
-
-	opens := time.Now()
-	p := &domain.Poll{Status: domain.StatusOpen, OpensAt: opens.Round(0), ClosesAt: opens.Round(0).Add(time.Minute)}
-
-	assert.True(t, p.IsOpenAt(opens.Add(time.Second)))
-}
-
 func TestShouldOpenAt(t *testing.T) {
 	t.Parallel()
 

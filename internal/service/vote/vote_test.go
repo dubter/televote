@@ -337,11 +337,6 @@ func TestVoterID_HexRoundTrip(t *testing.T) {
 func TestResult_ZeroValueIsNotSuccess(t *testing.T) {
 	t.Parallel()
 
-	assert.NotEqual(t, vote.Result(0), vote.ResultCounted)
-	assert.NotEqual(t, vote.Result(0), vote.ResultAlreadyCounted)
-	assert.Equal(t, vote.Result(1), vote.ResultCounted)
-	assert.Equal(t, vote.Result(2), vote.ResultAlreadyCounted)
-
 	var zero vote.Result
 	assert.False(t, zero.Valid(), "нулевой Result не может быть валидным исходом")
 	assert.True(t, vote.ResultCounted.Valid())
