@@ -1,59 +1,59 @@
 # Televote
 
-Анонимное голосование под пик ТВ-эфира: минутный ролик, 100 млн зрителей,
-QR-код на экране. Без регистрации, с дедупликацией.
+Anonymous voting at the peak of a TV broadcast: a one-minute segment, 100M viewers,
+a QR code on screen. No sign-up, with deduplication.
 
-## Запуск
+## Running it
 
 ```bash
 make demo
 ```
 
 ```
-Голосование   http://localhost:8080/p/demo
-QR-код        http://localhost:8080/p/demo/qr.png
-Админка       http://localhost:8080/admin      admin / dev-only-change-me
+Voting        http://localhost:8080/p/demo
+QR code       http://localhost:8080/p/demo/qr.png
+Admin         http://localhost:8080/admin      admin / dev-only-change-me
 Grafana       http://localhost:3000/d/televote
 ```
 
-Нужен Docker с 6 ГБ памяти и порты 8080–8082, 3000, 55432. Порт занят —
-`APP_PORT=9090 make demo`. Остановить: `make down`.
+Needs Docker with 6 GB of memory and ports 8080-8082, 3000, 55432. If a port is taken,
+`APP_PORT=9090 make demo`. To stop: `make down`.
 
-| Команда | Что проверяет |
+| Command | What it checks |
 |---|---|
-| `make smoke` | дедуп между инстансами: один голосующий, два инстанса, один голос |
-| `make test` | unit с детектором гонок |
-| `make test-integration` | Postgres и Lua-скрипт на настоящем Redis |
-| `make load` | k6: стоимость голоса и сверка агрегата |
-| `make chaos` | отказ Redis, ребаланс консьюмеров, падение Postgres |
-| `make lint` | golangci-lint в докере, версия из CI |
+| `make smoke` | dedup across instances: one voter, two instances, one vote |
+| `make test` | unit tests with the race detector |
+| `make test-integration` | Postgres and the Lua script against a real Redis |
+| `make load` | k6: cost per vote and aggregate reconciliation |
+| `make chaos` | Redis failure, consumer rebalance, Postgres crash |
+| `make lint` | golangci-lint in Docker, the version CI uses |
 
-`make load` и `make chaos` заканчиваются сверкой счётчиков с числом принятых
-голосов: потерю в пайплайне тест на латентность не увидел бы.
+`make load` and `make chaos` both end by reconciling the counters against the number of
+accepted votes: a latency test would not notice a loss inside the pipeline.
 
-## Архитектура
+## Architecture
 
 ```mermaid
 flowchart LR
-    viewer(["Зритель"])
+    viewer(["Viewer"])
     lb["nginx"]
 
-    subgraph hot["Эфир: 60 секунд, 2M RPS"]
+    subgraph hot["On air: 60 seconds, 2M RPS"]
         api["api"]
         kafka[("Kafka")]
     end
 
-    subgraph drain["Дренаж: ~5 минут"]
+    subgraph drain["Drain: ~5 minutes"]
         consumer["consumer"]
         redis[("Redis Cluster")]
         snapshot["snapshot"]
     end
 
     pg[("Postgres")]
-    admin(["Админка"])
+    admin(["Admin"])
 
     viewer -->|POST /vote| lb --> api -->|produce| kafka
-    api -.->|конфиг опроса| pg
+    api -.->|poll config| pg
     kafka --> consumer -->|EVALSHA| redis
     snapshot --> redis
     snapshot --> pg --> admin
@@ -62,43 +62,43 @@ flowchart LR
     class api,kafka hotPath
 ```
 
-**ТЗ не требует, чтобы результат был виден сразу.** Значит в окне эфира жёстко
-требуется одно: принять голоса и не потерять. Дедуп и подсчёт отложимы — это и
-определило форму системы.
+**The spec does not require the result to be visible immediately.** So during the broadcast
+window exactly one thing is mandatory: accept the votes and lose none of them. Deduplication and
+counting can be deferred, and that is what gave the system its shape.
 
-| | Синхронный подсчёт | Приём в Kafka |
+| | Synchronous counting | Accept into Kafka |
 |---|---|---|
-| Мастеров Redis | 32 | **3** |
-| Подов приёма | ~100 | **29** |
-| Отказ Redis на минуту | **потерянный эфир** | поздний результат |
+| Redis masters | 32 | **3** |
+| Ingest pods | ~100 | **29** |
+| Redis down for a minute | **the broadcast is lost** | a late result |
 
-Ёмкость считает `domain.CapacityFor` из `expected_audience`: дренаж за 5 минут —
-3 мастера Redis, за минуту — 13.
+Capacity comes from `domain.CapacityFor` applied to `expected_audience`: draining in 5 minutes
+takes 3 Redis masters, draining in one takes 13.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant V as Зритель
+    participant V as Viewer
     participant A as api
     participant K as Kafka
     participant C as consumer
     participant R as Redis
 
     V->>A: POST /vote
-    Note over A: разбор JSON и HMAC-SHA256,<br/>ни Redis, ни Postgres на пути
+    Note over A: JSON parsing and HMAC-SHA256,<br/>neither Redis nor Postgres on the path
     A->>K: produce
     A-->>V: 202 accepted
-    Note over K,C: эфир кончился, дренаж начался
+    Note over K,C: the broadcast ended, the drain began
     C->>K: consume
-    C->>R: EVALSHA: дедуп и инкремент атомарно
+    C->>R: EVALSHA: dedup and increment, atomically
     R-->>C: counted / already_counted
 ```
 
-Ответ `202`, а не `200`: голос принят к обработке, посчитает его консьюмер.
+`202` rather than `200`: the vote has been accepted for processing, the consumer will count it.
 
-**Голос — инкремент, а не строка.** Нужен обезличенный агрегат, поэтому 30 млн
-голосов — счётчики по числу вариантов. Отдельных голосов нет нигде, связь
-«человек → выбор» неоткуда взять. Цена: пересчитать результат позже нельзя.
+**A vote is an increment, not a row.** What is needed is an anonymous aggregate, so 30M votes
+become counters, one per choice. Individual votes are not stored anywhere, and there is nowhere
+to recover a "person → choice" link from. The price: the result cannot be recomputed later.
 
 ```lua
 if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) == false then return 2 end
@@ -107,69 +107,68 @@ redis.call('HINCRBY', KEYS[2], 'b', 1)
 redis.call('EXPIRE', KEYS[2], ARGV[1])
 ```
 
-Один вызов даёт корректность при любой балансировке, один RTT вместо двух и
-идемпотентность. Последнее обязательно: Kafka доставляет at-least-once, и без
-него каждый ребаланс завышал бы результат. Дедуп-ключ и счётчик лежат в одном
-слоте благодаря общему hash tag `{p:<pollID>:s<shard>}` — иначе `EVALSHA` вернёт
-`CROSSSLOT`, и голос пропадёт молча.
+A single call gives correctness under any balancing, one RTT instead of two, and idempotency.
+The last one is mandatory: Kafka delivers at-least-once, and without it every rebalance would
+inflate the result. The dedup key and the counter live in the same slot thanks to a shared hash
+tag `{p:<pollID>:s<shard>}` — otherwise `EVALSHA` returns `CROSSSLOT` and the vote disappears
+silently.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> scheduled: админ создал
-    scheduled --> open: снапшотер по opens_at<br/>или админ вручную
-    open --> closed: дренаж дошёл до нуля<br/>после closes_at
+    [*] --> scheduled: created by an admin
+    scheduled --> open: the snapshotter at opens_at<br/>or an admin by hand
+    open --> closed: the drain reached zero<br/>after closes_at
     closed --> [*]
 
     note right of open
-        «Закрыть» двигает closes_at,
-        а не статус
+        "Close" moves closes_at,
+        not the status
     end note
 ```
 
-Прямой перевод в `closed` выбросил бы опрос из выборки снапшотера, и голоса
-последних секунд пропали бы.
+Flipping straight to `closed` would drop the poll out of the snapshotter's selection, and the
+votes from the final seconds would be lost.
 
-### Устойчивость
+### Resilience
 
-| Отказ | Что происходит |
+| Failure | What happens |
 |---|---|
-| Redis недоступен | приём идёт, голоса ждут в Kafka, консьюмер ретраит |
-| Redis отказывает подряд | circuit breaker размыкает цепь, повтор позже |
-| Postgres недоступен | приём его не касается, конфиги из последнего снимка |
-| Kafka недоступна | `503` с `Retry-After` — клиенту не врут |
-| Реплика консьюмера упала | ребаланс переигрывает, идемпотентность не удваивает |
+| Redis unavailable | ingest continues, votes wait in Kafka, the consumer retries |
+| Redis failing repeatedly | the circuit breaker opens, retry later |
+| Postgres unavailable | ingest does not touch it, configs come from the last snapshot |
+| Kafka unavailable | `503` with `Retry-After` — the client is not lied to |
+| A consumer replica dies | the rebalance replays, idempotency prevents double counting |
 
-Временная ошибка Redis никогда не приводит к потере голоса: консьюмер ретраит,
-пока жив контекст, и держит партицию. `/readyz` проверяет зависимости роли: у
-приёма Kafka, у консьюмера и снапшотера Redis и Postgres — иначе падение
-Postgres увело бы все поды приёма из балансировщика.
+A transient Redis error never costs a vote: the consumer retries for as long as its context is
+alive and holds the partition. `/readyz` checks the dependencies of its own role — Kafka for
+ingest, Redis and Postgres for the consumer and the snapshotter — otherwise a Postgres outage
+would pull every ingest pod out of the load balancer.
 
-**Автоскейлинг** — про Kubernetes; на docker-compose реплики фиксированные.
-Сервис отдаёт `/internal/capacity` для KEDA, но к приёму автоскейлинг
-неприменим: петля HPA от 60 секунд до трёх минут, а ролик длится 60 — ёмкость
-поднимается по расписанию эфира.
+**Autoscaling** is a Kubernetes concern; on docker-compose the replica counts are fixed. The
+service exposes `/internal/capacity` for KEDA, but autoscaling does not apply to ingest: an HPA
+loop takes between 60 seconds and three minutes, and the segment lasts 60 — capacity is raised
+on the broadcast schedule instead.
 
-### Структура
+### Layout
 
 ```
 cmd/{api,consumer,snapshot,migrate}
 
 internal/
-  domain     сущности, правила выбора, FSM, агрегат, расчёт ёмкости
+  domain     entities, choice rules, FSM, aggregate, capacity calculation
   service    vote, consumer, snapshot, pollcfg, capacity, auth
   adapter    httpapi, producer, postgres
   platform   app, config, metrics, observability, health, httpx
 ```
 
-Зависимости направлены внутрь: `internal/domain` не импортирует ничего из
-проекта, это проверяет `depguard`. Три роли — три бинаря: приём растёт под пик
-эфира, консьюмеры — под consumer lag, снапшотер не растёт вообще. Стенд
-поднимает ту же топологию.
+Dependencies point inward: `internal/domain` imports nothing from the project, and `depguard`
+enforces it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
+on consumer lag, the snapshotter does not scale at all. The local stand-up brings up the same
+topology.
 
-Стек: Go 1.26, `franz-go`, `rueidis`, `pgx/v5`, `chi`, OpenTelemetry →
-`grafana/otel-lgtm`. Своими руками написана только бизнес-логика: Lua-скрипт,
-вывод `voterID` солью опроса, шардирование ключей, снапшотер, функция ёмкости.
-Код без комментариев намеренно.
+Stack: Go 1.26, `franz-go`, `rueidis`, `pgx/v5`, `chi`, OpenTelemetry → `grafana/otel-lgtm`.
+Only the business logic is hand-written: the Lua script, deriving `voterID` with the poll salt,
+key sharding, the snapshotter, and the capacity function. The code carries no comments, deliberately.
 
 ## API
 
@@ -179,108 +178,105 @@ curl -X POST localhost:8080/api/v1/polls/demo/vote \
   -d '{"choices":[1],"voter":"6f8a4c2e-1a3d-4b5c-8d7e-0f1a2b3c4d5e"}'
 ```
 
-`voter` — случайный идентификатор из `localStorage`; сервер выводит из него ключ
-дедупа, хэшируя солью опроса.
+`voter` is a random identifier from `localStorage`; the server derives the dedup key from it by
+hashing with the poll salt.
 
-| Метод | Путь | Что делает |
+| Method | Path | What it does |
 |---|---|---|
-| `GET` | `/api/v1/polls/{slug}` | вопрос и варианты, кэшируется на CDN |
-| `POST` | `/api/v1/polls/{slug}/vote` | принять голос |
-| `GET` | `/p/{slug}`, `/p/{slug}/qr.png` | страница 2.5 КБ gzip и QR-код |
+| `GET` | `/api/v1/polls/{slug}` | the question and its choices, CDN-cacheable |
+| `POST` | `/api/v1/polls/{slug}/vote` | accept a vote |
+| `GET` | `/p/{slug}`, `/p/{slug}/qr.png` | a 2.5 KB gzipped page and the QR code |
 | `POST` | `/api/v1/admin/login` | JWT |
-| `GET`, `POST` | `/api/v1/admin/polls` | список и создание |
-| `POST` | `/api/v1/admin/polls/{slug}/open`, `/close` | открыть, закрыть приём |
-| `GET` | `/api/v1/admin/polls/{slug}/results` | обезличенные результаты |
+| `GET`, `POST` | `/api/v1/admin/polls` | list and create |
+| `POST` | `/api/v1/admin/polls/{slug}/open`, `/close` | open and close ingest |
+| `GET` | `/api/v1/admin/polls/{slug}/results` | anonymized results |
 
-Результаты возвращают `final: false`, пока идёт подсчёт. Проценты считаются от
-числа бюллетеней: при множественном выборе сумма голосов больше числа
-проголосовавших.
+Results carry `final: false` while counting is still running. Percentages are computed against
+the number of ballots: with multiple choice, the sum of votes exceeds the number of voters.
 
-Коды: `202` принят · `400` неверный выбор или `voter` · `401`/`403` нет токена
-или датацентровый адрес · `404`/`409` нет опроса или голос вне окна ·
-`429`/`503` частота или Kafka недоступна.
+Status codes: `202` accepted · `400` invalid choice or `voter` · `401`/`403` missing token or a
+datacenter address · `404`/`409` no such poll or a vote outside the window · `429`/`503` rate
+limit or Kafka unavailable.
 
-## Дедупликация
+## Deduplication
 
-| Слой | Останавливает | Обходится |
+| Layer | Stops | Bypassed by |
 |---|---|---|
-| `localStorage` и хэш солью опроса | F5, закрытие вкладки, двойной клик | инкогнито, другой браузер |
-| `SET NX` в Lua | повтор тем же идентификатором | новым идентификатором |
-| Лимит частоты по префиксу /64 | наивный скрипт | прокси |
-| ASN-фильтр датацентров | скрипт с VPS | резидентные прокси |
+| `localStorage` plus a poll-salted hash | F5, closing the tab, double click | incognito, another browser |
+| `SET NX` inside Lua | a repeat under the same identifier | a new identifier |
+| Rate limit per /64 prefix | a naive script | a proxy |
+| Datacenter ASN filter | a script on a VPS | residential proxies |
 
-ТЗ просит защиту «на уровне обычных, не технически подкованных пользователей».
-Слои останавливают человека с F5, но не скрипт на двадцать строк — это
-соответствие требованию, а не недоработка. **Fingerprint не используется** ни
-как ключ, ни как сигнал: 18 бит энтропии против 30 млн голосующих дают потерю
-99 %, причём отказы смещены по демографии.
+The spec asks for protection "at the level of ordinary, non-technical users". These layers stop
+a person hitting F5, but not a twenty-line script — that is compliance with the requirement, not
+a gap. **Fingerprinting is not used** either as a key or as a signal: 18 bits of entropy against
+30M voters means a 99% loss rate, and the rejections skew by demographic.
 
-## Допущения
+## Assumptions
 
-- **Конверсия 30 %** — в ТЗ её нет. Задаётся пер-опрос полем `expected_audience`:
-  ошибка меняет число нод, а не решения.
-- **Результат нужен eventually** — ТЗ не задаёт времени. Дренаж 5 минут.
-- **Половина трафика в первые 15 секунд** — зрители сканируют QR сразу.
-- **Один регион.** Глобальное распределение — это CDN и edge.
+- **30% conversion** — not in the spec. Set per poll through `expected_audience`: getting it
+  wrong changes the node count, not the design decisions.
+- **The result is needed eventually** — the spec sets no deadline. The drain takes 5 minutes.
+- **Half the traffic in the first 15 seconds** — viewers scan the QR immediately.
+- **A single region.** Global distribution is a CDN and edge concern.
 
-## Наблюдаемость
+## Observability
 
-`GET /metrics`, трейсы и логи по OTLP, дашборд заводится сам:
+`GET /metrics`, traces and logs over OTLP, the dashboard provisions itself:
 <http://localhost:3000/d/televote>.
 
-| Метрика | Смысл |
+| Metric | Meaning |
 |---|---|
-| `televote_votes_accepted_total` | принято на входе |
-| `televote_votes_rejected_total` | отвергнуто, лейбл `reason` |
-| `televote_votes_counted_total` | `counted` или `already_counted` |
-| `televote_produce_duration_seconds` | бюджет ответа клиенту |
-| `televote_apply_duration_seconds` | один `EVALSHA` в Redis |
-| `televote_consumer_lag` | ноль означает конец дренажа |
-| `televote_ballots_total` | бюллетеней в последнем снимке |
-| `televote_http_requests_total` | запросы по маршруту и статусу |
-| `televote_redis_breaker_open` | брейкер перед Redis разомкнут |
-| `televote_poll_config_age_seconds` | возраст последнего обновления конфигов |
+| `televote_votes_accepted_total` | accepted at ingest |
+| `televote_votes_rejected_total` | rejected, with a `reason` label |
+| `televote_votes_counted_total` | `counted` or `already_counted` |
+| `televote_produce_duration_seconds` | the budget for the client's response |
+| `televote_apply_duration_seconds` | a single `EVALSHA` in Redis |
+| `televote_consumer_lag` | zero means the drain is done |
+| `televote_ballots_total` | ballots in the latest snapshot |
+| `televote_http_requests_total` | requests by route and status |
+| `televote_redis_breaker_open` | the breaker in front of Redis is open |
+| `televote_poll_config_age_seconds` | age of the last config refresh |
 
-Трейс сшивает приём и подсчёт: контекст едет в заголовках записи Kafka. Лога на
-каждый запрос нет намеренно — при 2M RPS это терабайты; в лог идут ошибки и
-отклонённые голоса.
+A trace stitches ingest to counting: the context travels in the Kafka record headers. There is
+deliberately no per-request log line — at 2M RPS that is terabytes; errors and rejected votes go
+to the log.
 
-## Нагрузочный тест
+## Load test
 
 ```
-принято 19 000 · посчитано 19 000 · потерь нет
-RPS ~310 (упирается в генератор) · p50 0.5 · p95 0.9 · p99 1.6 мс
+19,000 accepted · 19,000 counted · no loss
+RPS ~310 (bounded by the generator) · p50 0.5 · p95 0.9 · p99 1.6 ms
 ```
 
-Прогон на ноутбуке, генератор делит CPU с сервисом — цифры нижняя граница.
-Переносится не абсолютный RPS, а стоимость единицы работы: отсюда линейно 29
-подов на 2M RPS. Не проверено: реальные 2M RPS, потолок Lua в Redis, ложные
-failover при `cluster-node-timeout 5s`.
+Run on a laptop, with the generator sharing CPU with the service — the numbers are a lower bound.
+What transfers is not the absolute RPS but the cost of a unit of work: from there, linearly, 29
+pods for 2M RPS. Not verified: a real 2M RPS, the ceiling of Lua in Redis, and spurious failovers
+at `cluster-node-timeout 5s`.
 
-## Что можно улучшить
+## What could be better
 
-- **Приём на CDN edge** — `/vote` не имеет состояния до Kafka.
-- **Turnstile** — единственное, что меняет порядок стоимости накрутки; не взят,
-  добавляет зависимость от Cloudflare.
-- **k8s-манифесты** — KEDA и Karpenter описаны, `/internal/capacity` реализован,
-  но YAML не написан: непроверенный манифест хуже отсутствующего.
+- **Ingest at the CDN edge** — `/vote` holds no state before Kafka.
+- **Turnstile** — the only thing that changes the order of magnitude of the cost of ballot
+  stuffing; not taken, it adds a dependency on Cloudflare.
+- **k8s manifests** — KEDA and Karpenter are described and `/internal/capacity` is implemented,
+  but the YAML is not written: an unverified manifest is worse than none.
 
-## Артефакты работы с ИИ
+## Artifacts of working with AI
 
-Проектирование шло диалогом с Claude Opus: разбор ТЗ, расчёты нагрузки, поиск
-корнер-кейсов. Часть кода написана агентами, часть — вручную по написанным
-тестам.
+The design was worked out in dialogue with Claude Opus: reading the spec apart, load calculations,
+hunting corner cases. Part of the code was written by agents, part by hand against tests written
+first.
 
-**Где рассуждение ошибалось.** Первая версия при недоступности Redis складывала
-голоса в память инстанса и отвечала `200` — буфер волатилен, OOM уносит его
-целиком, а человеку уже сказали, что голос учтён; заменено на Kafka. Конфиг
-опроса предлагалось держать в Redis — пересчёт показал 50 запросов в секунду к
-реплике Postgres. Fingerprint отвергнут дважды.
+**Where the reasoning was wrong.** The first version buffered votes in instance memory when Redis
+was unavailable and answered `200` — the buffer is volatile, an OOM takes all of it, and the
+person has already been told their vote counted; replaced with Kafka. Poll config was proposed to
+live in Redis; recalculating showed 50 requests per second against a Postgres replica.
+Fingerprinting was rejected twice.
 
-**Что нашли инструменты, а не рассуждение.** Нагрузочный тест нашёл потерю
-голосов: консьюмер отбрасывал сообщение, если кэш конфигов ещё не знал про
-свежесозданный опрос, — и коммитил оффсет. Прогон в браузере нашёл, что
-результаты закрытого опроса отдавали 500. Ревью кода нашло, что `IsRetryable` не
-распознавал `-READONLY` и `-OOM`: при failover мастера Redis голоса выбрасывались
-без ретрая. CI поймал то, что не воспроизводилось локально: `make demo` не ждал
-балансировщик и падал на холодной машине.
+**What the tools found, rather than the reasoning.** The load test found lost votes: the consumer
+dropped a message when its config cache did not yet know about a freshly created poll — and
+committed the offset anyway. A browser run found that results for a closed poll returned 500.
+Code review found that `IsRetryable` did not recognize `-READONLY` and `-OOM`: during a Redis
+master failover, votes were discarded without a retry. CI caught what did not reproduce locally:
+`make demo` did not wait for the load balancer and failed on a cold machine.
