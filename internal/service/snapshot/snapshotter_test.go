@@ -69,10 +69,9 @@ func newSnapshotter(
 	t.Helper()
 
 	s, err := snapshot.New(agg, res, polls, lag, snapshot.Config{
-		Interval: time.Hour,
-		Grace:    30 * time.Second,
-		Now:      func() time.Time { return now },
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Grace: 30 * time.Second,
+		Now:   func() time.Time { return now },
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	require.NoError(t, err)
 	return s
@@ -275,7 +274,6 @@ func TestTick_ReportsLagAndBallotsToObserver(t *testing.T) {
 
 	res, _ := resultStore(t, ctrl)
 	s, err := snapshot.New(agg, res, polls, lag, snapshot.Config{
-		Interval: time.Hour,
 		Grace:    30 * time.Second,
 		Now:      func() time.Time { return closesAt.Add(time.Minute) },
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),

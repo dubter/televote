@@ -8,6 +8,7 @@ import (
 	"github.com/dubter/televote/internal/service/capacity"
 	"github.com/dubter/televote/internal/service/snapshot"
 	"github.com/dubter/televote/internal/transport/httpapi"
+	snapshotworker "github.com/dubter/televote/internal/worker/snapshot"
 )
 
 func RunSnapshot(ctx context.Context) error {
@@ -64,13 +65,17 @@ func RunSnapshot(ctx context.Context) error {
 	lag := kafkaLag{kafka, cfg.KafkaTopic}
 
 	snapshotter, err := snapshot.New(tally, results, pollsWrite, lag, snapshot.Config{
-		Interval: cfg.SnapshotInterval,
 		Grace:    cfg.SnapshotFinalGrace,
 		Log:      rt.log,
 		Observer: rt.metrics,
 	})
 	if err != nil {
 		return fmt.Errorf("snapshotter: %w", err)
+	}
+
+	ticker, err := snapshotworker.NewTicker(snapshotter, cfg.SnapshotInterval, rt.log)
+	if err != nil {
+		return fmt.Errorf("snapshot worker: %w", err)
 	}
 
 	advisor, err := capacity.New(pollsRead, lag, capacity.Config{
@@ -83,5 +88,5 @@ func RunSnapshot(ctx context.Context) error {
 
 	router := httpapi.SnapshotRouter(rt.probes(pgRead.Ping, store.Ping, kafka.Ping), advisor)
 
-	return rt.serve(ctx, router, snapshotter.Run)
+	return rt.serve(ctx, router, ticker.Run)
 }
