@@ -6,8 +6,9 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/dubter/televote/internal/service/consumer"
+	"github.com/dubter/televote/internal/service/counting"
 	"github.com/dubter/televote/internal/transport/httpapi"
+	kafkaworker "github.com/dubter/televote/internal/worker/kafka"
 )
 
 func RunConsumer(ctx context.Context) error {
@@ -47,18 +48,22 @@ func RunConsumer(ctx context.Context) error {
 		return err
 	}
 
-	counting, err := consumer.NewCounting(kafka, tally, cache, rt.metrics, rt.log, consumer.Config{
+	count, err := counting.New(tally, cache, rt.metrics, rt.log, counting.Config{
 		RetryBudget:   cfg.VoteRetryBudget,
 		LookupBudget:  cfg.PollConfigRefresh * lookupRefreshFactor,
 		ErrorRatio:    cfg.BreakerErrorRatio,
 		BreakerWindow: cfg.BreakerWindow,
-		Workers:       cfg.ConsumerWorkers,
 	})
 	if err != nil {
-		return fmt.Errorf("counting consumer: %w", err)
+		return fmt.Errorf("counting: %w", err)
+	}
+
+	consumer, err := kafkaworker.NewConsumer(kafka, count, rt.metrics, rt.log, kafkaworker.Config{Workers: cfg.ConsumerWorkers})
+	if err != nil {
+		return fmt.Errorf("kafka consumer: %w", err)
 	}
 
 	router := httpapi.ConsumerRouter(rt.probes(pgRead.Ping, store.Ping, kafka.Ping))
 
-	return rt.serve(ctx, router, cache.Run, counting.Run)
+	return rt.serve(ctx, router, cache.Run, consumer.Run)
 }
