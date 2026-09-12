@@ -21,14 +21,19 @@ make load     k6
 ## Layer boundaries
 
 ```
-domain  ◄──  service  ◄──  transport (httpapi)
-domain  ◄──  adapter (postgres, redis, producer)
+domain  ◄──  service  ◄──  transport (httpapi)      HTTP in, use case call, JSON out
+domain  ◄──  service  ◄──  worker (kafka, snapshot)  fetch/tick in, use case call
+domain  ◄──  adapter (postgres, redis, producer)     implement interfaces declared in service
 platform/app — the only place where all of them meet
 ```
 
-`internal/domain` imports **nothing** from the project. Services never see `rueidis`,
-`pgx` or `net/http`; handlers never see `rueidis`, `pgx` or `kgo`. All of this is forbidden
-by `depguard` in `.golangci.yml` — that is a check, not a preference.
+`internal/domain` holds entities and pure rules and imports **nothing** from the project.
+Every business process is a use case in `internal/service` (`voting.Accept`,
+`counting.Count`, `snapshot.Tick`, `polls.Create/Open/Close/Results`, `auth.Login`); services
+see only `domain` and interfaces they declare themselves — never `net/http`, `rueidis`, `pgx`,
+`kgo`, adapters, transport or workers. Handlers and workers decode input, call a use case and
+encode output; they never touch adapters. All of this is forbidden by `depguard` in
+`.golangci.yml` — that is a check, not a preference.
 
 Every binary wires itself: `app.RunAPI`, `app.RunConsumer` and `app.RunSnapshot` open
 exactly their own connections and release them with `defer`. Only the lifecycle is shared

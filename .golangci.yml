@@ -37,27 +37,42 @@ linters:
           allow:
             - $gostd
             - github.com/google/uuid
-        no-infra-in-core:
+        service-is-infra-free:
           files:
             - "**/internal/service/**"
             - "**/internal/domain/**"
           deny:
             - pkg: net/http
-              desc: "HTTP lives only in internal/transport; the service layer must not know about it"
+              desc: "HTTP lives only in internal/transport; use cases must not know about it"
             - pkg: github.com/redis/rueidis
-              desc: "Redis lives only in internal/adapter/redis; services see domain types and errors"
+              desc: "Redis lives only in internal/adapter/redis; use cases see domain types and errors"
             - pkg: github.com/jackc/pgx/v5
-              desc: "Postgres lives only in internal/adapter/postgres; services see repository interfaces"
-        no-infra-in-transport:
+              desc: "Postgres lives only in internal/adapter/postgres; use cases see repository interfaces"
+            - pkg: github.com/twmb/franz-go
+              desc: "Kafka lives in internal/adapter/producer and internal/worker/kafka; use cases see interfaces"
+            - pkg: github.com/dubter/televote/internal/adapter
+              desc: "use cases declare the interfaces adapters implement, never the reverse"
+            - pkg: github.com/dubter/televote/internal/transport
+              desc: "transport calls use cases, never the reverse"
+            - pkg: github.com/dubter/televote/internal/worker
+              desc: "workers call use cases, never the reverse"
+        transport-and-workers-call-services:
+          files:
+            - "**/internal/transport/**"
+            - "**/internal/worker/**"
+          deny:
+            - pkg: github.com/redis/rueidis
+              desc: "handlers and workers talk to use cases, never to Redis directly"
+            - pkg: github.com/jackc/pgx/v5
+              desc: "handlers and workers talk to use cases, never to Postgres directly"
+            - pkg: github.com/dubter/televote/internal/adapter
+              desc: "handlers and workers depend on use cases and domain, not on adapters"
+        transport-has-no-kafka:
           files:
             - "**/internal/transport/**"
           deny:
-            - pkg: github.com/redis/rueidis
-              desc: "handlers talk to services and adapters, never to Redis directly"
-            - pkg: github.com/jackc/pgx/v5
-              desc: "handlers talk to services and adapters, never to Postgres directly"
             - pkg: github.com/twmb/franz-go
-              desc: "handlers publish through internal/adapter/producer, never through kgo directly"
+              desc: "handlers publish through the voting use case, never through kgo directly"
         single-logger:
           files:
             - "**/internal/**"
