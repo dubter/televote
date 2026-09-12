@@ -7,6 +7,7 @@ import (
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/platform/httpx"
+	"github.com/dubter/televote/internal/service/auth"
 )
 
 type errorResponse struct {
@@ -48,14 +49,14 @@ func classify(err error) (status int, code string) {
 		return http.StatusConflict, "poll_closed"
 	case errors.Is(err, domain.ErrBadTransition):
 		return http.StatusConflict, "bad_transition"
-	case errors.Is(err, errSlugTaken):
+	case errors.Is(err, domain.ErrSlugTaken):
 		return http.StatusConflict, "slug_taken"
 
 	case errors.Is(err, errNotFound), errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound, "not_found"
 	case errors.Is(err, domain.ErrVersionConflict):
 		return http.StatusConflict, "version_conflict"
-	case errors.Is(err, errUnauthorized):
+	case errors.Is(err, errUnauthorized), errors.Is(err, auth.ErrInvalidCredentials):
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, errForbidden):
 		return http.StatusForbidden, "forbidden"
@@ -73,5 +74,4 @@ var (
 	errNotFound     = errors.New("not_found")
 	errUnauthorized = errors.New("unauthorized")
 	errForbidden    = errors.New("forbidden")
-	errSlugTaken    = errors.New("slug_taken")
 )

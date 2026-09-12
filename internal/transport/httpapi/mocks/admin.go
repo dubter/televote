@@ -14,79 +14,67 @@ import (
 	reflect "reflect"
 
 	domain "github.com/dubter/televote/internal/domain"
-	uuid "github.com/google/uuid"
+	auth "github.com/dubter/televote/internal/service/auth"
+	polls "github.com/dubter/televote/internal/service/polls"
 	gomock "go.uber.org/mock/gomock"
 )
 
-// MockPollStore is a mock of PollStore interface.
-type MockPollStore struct {
+// MockPollManager is a mock of PollManager interface.
+type MockPollManager struct {
 	ctrl     *gomock.Controller
-	recorder *MockPollStoreMockRecorder
+	recorder *MockPollManagerMockRecorder
 	isgomock struct{}
 }
 
-// MockPollStoreMockRecorder is the mock recorder for MockPollStore.
-type MockPollStoreMockRecorder struct {
-	mock *MockPollStore
+// MockPollManagerMockRecorder is the mock recorder for MockPollManager.
+type MockPollManagerMockRecorder struct {
+	mock *MockPollManager
 }
 
-// NewMockPollStore creates a new mock instance.
-func NewMockPollStore(ctrl *gomock.Controller) *MockPollStore {
-	mock := &MockPollStore{ctrl: ctrl}
-	mock.recorder = &MockPollStoreMockRecorder{mock}
+// NewMockPollManager creates a new mock instance.
+func NewMockPollManager(ctrl *gomock.Controller) *MockPollManager {
+	mock := &MockPollManager{ctrl: ctrl}
+	mock.recorder = &MockPollManagerMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockPollStore) EXPECT() *MockPollStoreMockRecorder {
+func (m *MockPollManager) EXPECT() *MockPollManagerMockRecorder {
 	return m.recorder
 }
 
-// CloseNow mocks base method.
-func (m *MockPollStore) CloseNow(ctx context.Context, id uuid.UUID, version uint32) error {
+// Close mocks base method.
+func (m *MockPollManager) Close(ctx context.Context, actor, slug string) (*domain.Poll, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CloseNow", ctx, id, version)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CloseNow indicates an expected call of CloseNow.
-func (mr *MockPollStoreMockRecorder) CloseNow(ctx, id, version any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseNow", reflect.TypeOf((*MockPollStore)(nil).CloseNow), ctx, id, version)
-}
-
-// Create mocks base method.
-func (m *MockPollStore) Create(ctx context.Context, p *domain.Poll) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", ctx, p)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Create indicates an expected call of Create.
-func (mr *MockPollStoreMockRecorder) Create(ctx, p any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockPollStore)(nil).Create), ctx, p)
-}
-
-// GetBySlug mocks base method.
-func (m *MockPollStore) GetBySlug(ctx context.Context, slug string) (*domain.Poll, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBySlug", ctx, slug)
+	ret := m.ctrl.Call(m, "Close", ctx, actor, slug)
 	ret0, _ := ret[0].(*domain.Poll)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetBySlug indicates an expected call of GetBySlug.
-func (mr *MockPollStoreMockRecorder) GetBySlug(ctx, slug any) *gomock.Call {
+// Close indicates an expected call of Close.
+func (mr *MockPollManagerMockRecorder) Close(ctx, actor, slug any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBySlug", reflect.TypeOf((*MockPollStore)(nil).GetBySlug), ctx, slug)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockPollManager)(nil).Close), ctx, actor, slug)
+}
+
+// Create mocks base method.
+func (m *MockPollManager) Create(ctx context.Context, actor string, spec domain.PollSpec) (*domain.Poll, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Create", ctx, actor, spec)
+	ret0, _ := ret[0].(*domain.Poll)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Create indicates an expected call of Create.
+func (mr *MockPollManagerMockRecorder) Create(ctx, actor, spec any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockPollManager)(nil).Create), ctx, actor, spec)
 }
 
 // List mocks base method.
-func (m *MockPollStore) List(ctx context.Context) ([]*domain.Poll, error) {
+func (m *MockPollManager) List(ctx context.Context) ([]*domain.Poll, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "List", ctx)
 	ret0, _ := ret[0].([]*domain.Poll)
@@ -95,113 +83,91 @@ func (m *MockPollStore) List(ctx context.Context) ([]*domain.Poll, error) {
 }
 
 // List indicates an expected call of List.
-func (mr *MockPollStoreMockRecorder) List(ctx any) *gomock.Call {
+func (mr *MockPollManagerMockRecorder) List(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockPollStore)(nil).List), ctx)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "List", reflect.TypeOf((*MockPollManager)(nil).List), ctx)
 }
 
-// Transition mocks base method.
-func (m *MockPollStore) Transition(ctx context.Context, id uuid.UUID, to domain.Status, version uint32) error {
+// Open mocks base method.
+func (m *MockPollManager) Open(ctx context.Context, actor, slug string) (*domain.Poll, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Transition", ctx, id, to, version)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Transition indicates an expected call of Transition.
-func (mr *MockPollStoreMockRecorder) Transition(ctx, id, to, version any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Transition", reflect.TypeOf((*MockPollStore)(nil).Transition), ctx, id, to, version)
-}
-
-// MockResultStore is a mock of ResultStore interface.
-type MockResultStore struct {
-	ctrl     *gomock.Controller
-	recorder *MockResultStoreMockRecorder
-	isgomock struct{}
-}
-
-// MockResultStoreMockRecorder is the mock recorder for MockResultStore.
-type MockResultStoreMockRecorder struct {
-	mock *MockResultStore
-}
-
-// NewMockResultStore creates a new mock instance.
-func NewMockResultStore(ctrl *gomock.Controller) *MockResultStore {
-	mock := &MockResultStore{ctrl: ctrl}
-	mock.recorder = &MockResultStoreMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockResultStore) EXPECT() *MockResultStoreMockRecorder {
-	return m.recorder
-}
-
-// Get mocks base method.
-func (m *MockResultStore) Get(ctx context.Context, pollID uuid.UUID) (domain.Aggregate, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Get", ctx, pollID)
-	ret0, _ := ret[0].(domain.Aggregate)
+	ret := m.ctrl.Call(m, "Open", ctx, actor, slug)
+	ret0, _ := ret[0].(*domain.Poll)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// Get indicates an expected call of Get.
-func (mr *MockResultStoreMockRecorder) Get(ctx, pollID any) *gomock.Call {
+// Open indicates an expected call of Open.
+func (mr *MockPollManagerMockRecorder) Open(ctx, actor, slug any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockResultStore)(nil).Get), ctx, pollID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockPollManager)(nil).Open), ctx, actor, slug)
 }
 
-// MockAdminStore is a mock of AdminStore interface.
-type MockAdminStore struct {
-	ctrl     *gomock.Controller
-	recorder *MockAdminStoreMockRecorder
-	isgomock struct{}
-}
-
-// MockAdminStoreMockRecorder is the mock recorder for MockAdminStore.
-type MockAdminStoreMockRecorder struct {
-	mock *MockAdminStore
-}
-
-// NewMockAdminStore creates a new mock instance.
-func NewMockAdminStore(ctrl *gomock.Controller) *MockAdminStore {
-	mock := &MockAdminStore{ctrl: ctrl}
-	mock.recorder = &MockAdminStoreMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockAdminStore) EXPECT() *MockAdminStoreMockRecorder {
-	return m.recorder
-}
-
-// Audit mocks base method.
-func (m *MockAdminStore) Audit(ctx context.Context, actor, action, entity string, payload any) error {
+// Results mocks base method.
+func (m *MockPollManager) Results(ctx context.Context, slug string) (polls.Outcome, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Audit", ctx, actor, action, entity, payload)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Audit indicates an expected call of Audit.
-func (mr *MockAdminStoreMockRecorder) Audit(ctx, actor, action, entity, payload any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Audit", reflect.TypeOf((*MockAdminStore)(nil).Audit), ctx, actor, action, entity, payload)
-}
-
-// ByLogin mocks base method.
-func (m *MockAdminStore) ByLogin(ctx context.Context, login string) (*domain.Admin, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ByLogin", ctx, login)
-	ret0, _ := ret[0].(*domain.Admin)
+	ret := m.ctrl.Call(m, "Results", ctx, slug)
+	ret0, _ := ret[0].(polls.Outcome)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// ByLogin indicates an expected call of ByLogin.
-func (mr *MockAdminStoreMockRecorder) ByLogin(ctx, login any) *gomock.Call {
+// Results indicates an expected call of Results.
+func (mr *MockPollManagerMockRecorder) Results(ctx, slug any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ByLogin", reflect.TypeOf((*MockAdminStore)(nil).ByLogin), ctx, login)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Results", reflect.TypeOf((*MockPollManager)(nil).Results), ctx, slug)
+}
+
+// MockAuthenticator is a mock of Authenticator interface.
+type MockAuthenticator struct {
+	ctrl     *gomock.Controller
+	recorder *MockAuthenticatorMockRecorder
+	isgomock struct{}
+}
+
+// MockAuthenticatorMockRecorder is the mock recorder for MockAuthenticator.
+type MockAuthenticatorMockRecorder struct {
+	mock *MockAuthenticator
+}
+
+// NewMockAuthenticator creates a new mock instance.
+func NewMockAuthenticator(ctrl *gomock.Controller) *MockAuthenticator {
+	mock := &MockAuthenticator{ctrl: ctrl}
+	mock.recorder = &MockAuthenticatorMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockAuthenticator) EXPECT() *MockAuthenticatorMockRecorder {
+	return m.recorder
+}
+
+// Login mocks base method.
+func (m *MockAuthenticator) Login(ctx context.Context, login, password string) (auth.Session, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Login", ctx, login, password)
+	ret0, _ := ret[0].(auth.Session)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Login indicates an expected call of Login.
+func (mr *MockAuthenticatorMockRecorder) Login(ctx, login, password any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Login", reflect.TypeOf((*MockAuthenticator)(nil).Login), ctx, login, password)
+}
+
+// Parse mocks base method.
+func (m *MockAuthenticator) Parse(raw string) (*auth.Claims, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Parse", raw)
+	ret0, _ := ret[0].(*auth.Claims)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Parse indicates an expected call of Parse.
+func (mr *MockAuthenticatorMockRecorder) Parse(raw any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Parse", reflect.TypeOf((*MockAuthenticator)(nil).Parse), raw)
 }

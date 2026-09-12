@@ -24,6 +24,7 @@ import (
 	"github.com/dubter/televote/internal/service/auth"
 	"github.com/dubter/televote/internal/service/capacity"
 	"github.com/dubter/televote/internal/service/pollcfg"
+	"github.com/dubter/televote/internal/service/polls"
 	"github.com/dubter/televote/internal/transport/httpapi"
 	"github.com/dubter/televote/internal/transport/httpapi/mocks"
 )
@@ -210,63 +211,44 @@ func TestServerTime_IsNeverCachedAndReflectsTheClock(t *testing.T) {
 type adminFixture struct {
 	handler http.Handler
 	admin   *httpapi.AdminHandler
-	polls   *mocks.MockPollStore
-	results *mocks.MockResultStore
-	admins  *mocks.MockAdminStore
-	tokens  *auth.TokenService
-	userID  uuid.UUID
+	polls   *mocks.MockPollManager
+	auth    *mocks.MockAuthenticator
 	token   string
 }
 
-func newAdminFixture(t *testing.T, role auth.Role, minLeadTime time.Duration) adminFixture {
+func newAdminFixture(t *testing.T, role auth.Role) adminFixture {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
-
-	polls := mocks.NewMockPollStore(ctrl)
-	results := mocks.NewMockResultStore(ctrl)
-	admins := mocks.NewMockAdminStore(ctrl)
+	polls := mocks.NewMockPollManager(ctrl)
+	authn := mocks.NewMockAuthenticator(ctrl)
 
 	tokens, err := auth.NewTokenService(adminKey, time.Hour)
 	require.NoError(t, err)
+	authn.EXPECT().Parse(gomock.Any()).DoAndReturn(tokens.Parse).AnyTimes()
 
-	userID := uuid.New()
-	token, err := tokens.Issue(userID, role)
+	token, err := tokens.Issue(uuid.New(), role)
 	require.NoError(t, err)
 
-	h, err := httpapi.NewAdminHandler(polls, results, admins, tokens,
-		auth.NewLoginLimiter(3, time.Minute, 100), func() time.Time { return inWindow }, minLeadTime)
+	h, err := httpapi.NewAdminHandler(polls, authn)
 	require.NoError(t, err)
 
-	return adminFixture{
-		handler: httpapi.AdminRoutes(h), admin: h, polls: polls, results: results, admins: admins,
-		tokens: tokens, userID: userID, token: token,
-	}
+	return adminFixture{handler: httpapi.AdminRoutes(h), admin: h, polls: polls, auth: authn, token: token}
 }
 
 func (f adminFixture) do(t *testing.T, method, path, body, token string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
 	if token != "" {
 		r.Header.Set("Authorization", "Bearer "+token)
 	}
-
 	w := httptest.NewRecorder()
 	f.handler.ServeHTTP(w, r)
 	return w
-}
-
-func (f adminFixture) expectAdmin(t *testing.T, login, password string, times int) {
-	t.Helper()
-
-	hash, err := auth.HashPassword(password)
-	require.NoError(t, err)
-
-	f.admins.EXPECT().ByLogin(gomock.Any(), login).
-		Return(&domain.Admin{ID: f.userID, Login: login, PasswordHash: hash, Role: string(auth.RoleAdmin)}, nil).
-		Times(times)
 }
 
 func createBody(slug, pollType string, opts []string) string {
@@ -282,10 +264,18 @@ func createBody(slug, pollType string, opts []string) string {
 	return string(payload)
 }
 
+func samplePoll(status domain.Status) *domain.Poll {
+	return &domain.Poll{
+		ID: uuid.New(), Slug: "final", Question: "кто победит?", Type: domain.PollTypeSingle,
+		Options: []domain.Option{{Idx: 0, Text: "первый"}, {Idx: 1, Text: "второй"}},
+		Status:  status, OpensAt: opensAt, ClosesAt: closesAt, ShardCount: 500, Version: 1,
+	}
+}
+
 func TestFR7_AdminEndpointRequiresJWT(t *testing.T) {
 	t.Parallel()
 
-	f := newAdminFixture(t, auth.RoleAdmin, 0)
+	f := newAdminFixture(t, auth.RoleAdmin)
 
 	for _, path := range []string{"/polls", "/polls/final/results"} {
 		assert.Equal(t, http.StatusUnauthorized, f.do(t, http.MethodGet, path, "", "").Code,
@@ -293,25 +283,43 @@ func TestFR7_AdminEndpointRequiresJWT(t *testing.T) {
 	}
 	assert.Equal(t, http.StatusUnauthorized,
 		f.do(t, http.MethodPost, "/polls", createBody("x", "single", []string{"а", "б"}), "").Code)
-
 	assert.Equal(t, http.StatusUnauthorized,
 		f.do(t, http.MethodGet, "/polls", "", "не-токен").Code)
 }
 
-func TestFR1_CreatePoll(t *testing.T) {
+func TestFR7_ViewerCannotWrite(t *testing.T) {
 	t.Parallel()
 
-	f := newAdminFixture(t, auth.RoleEditor, 0)
+	f := newAdminFixture(t, auth.RoleViewer)
+	f.polls.EXPECT().List(gomock.Any()).Return([]*domain.Poll{samplePoll(domain.StatusScheduled)}, nil).Times(1)
+	f.polls.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+	f.polls.EXPECT().Open(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	var created *domain.Poll
-	f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, p *domain.Poll) error { created = p; return nil },
-	).Times(1)
-	f.admins.EXPECT().Audit(gomock.Any(), gomock.Any(), "create_poll", "final", gomock.Any()).
-		Return(nil).Times(1)
+	assert.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/polls", "", f.token).Code, "чтение доступно viewer")
+	assert.Equal(t, http.StatusForbidden,
+		f.do(t, http.MethodPost, "/polls", createBody("x", "single", []string{"а", "б"}), f.token).Code)
+	assert.Equal(t, http.StatusForbidden, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
+}
+
+func TestCreatePoll_DecodesTheSpecAndPassesTheActor(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminFixture(t, auth.RoleEditor)
+
+	var gotSpec domain.PollSpec
+	f.polls.EXPECT().Create(gomock.Any(), gomock.Not(""), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, spec domain.PollSpec) (*domain.Poll, error) {
+			gotSpec = spec
+			return samplePoll(domain.StatusScheduled), nil
+		})
 
 	w := f.do(t, http.MethodPost, "/polls", createBody("final", "single", []string{"первый", "второй"}), f.token)
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	assert.Equal(t, "final", gotSpec.Slug)
+	assert.Equal(t, domain.PollTypeSingle, gotSpec.Type)
+	assert.Equal(t, []string{"первый", "второй"}, gotSpec.Options)
+	assert.Equal(t, inWindow.Add(2*time.Hour), gotSpec.OpensAt)
 
 	var got struct {
 		Slug       string   `json:"slug"`
@@ -320,137 +328,93 @@ func TestFR1_CreatePoll(t *testing.T) {
 		ShardCount uint16   `json:"shard_count"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-
 	assert.Equal(t, "final", got.Slug)
-	assert.Equal(t, string(domain.StatusScheduled), got.Status, "новый опрос обязан быть scheduled")
+	assert.Equal(t, string(domain.StatusScheduled), got.Status)
 	assert.Equal(t, []string{"первый", "второй"}, got.Options)
-	assert.NotZero(t, got.ShardCount, "нулевой shard_count дал бы деление на ноль на горячем пути")
-
-	require.NotNil(t, created)
-	assert.Equal(t, domain.StatusScheduled, created.Status)
+	assert.EqualValues(t, 500, got.ShardCount)
 }
 
-func TestFR1_RejectsInvalidPolls(t *testing.T) {
+func TestCreatePoll_RejectsUnparsableBodiesBeforeTheUseCase(t *testing.T) {
 	t.Parallel()
 
-	f := newAdminFixture(t, auth.RoleEditor, 0)
-	f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).Times(0)
+	f := newAdminFixture(t, auth.RoleEditor)
+	f.polls.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	cases := map[string]string{
-		"неизвестный тип":   createBody("a", "ranking", []string{"а", "б"}),
-		"один вариант":      createBody("b", "single", []string{"а"}),
-		"пустые варианты":   createBody("c", "single", []string{}),
-		"пустой вариант":    createBody("d", "single", []string{"а", "  "}),
+	for name, body := range map[string]string{
 		"мусор вместо тела": `{"slug":`,
-	}
-
-	for name, body := range cases {
+		"дата не RFC3339":   `{"slug":"a","type":"single","options":["а","б"],"opens_at":"завтра","closes_at":"послезавтра"}`,
+	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodPost, "/polls", body, f.token).Code)
 		})
 	}
 }
 
-func TestCreatePoll_DuplicateSlug(t *testing.T) {
+func TestAdmin_MapsUseCaseErrorsToStatuses(t *testing.T) {
 	t.Parallel()
 
-	f := newAdminFixture(t, auth.RoleEditor, 0)
-
-	gomock.InOrder(
-		f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil),
-		f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).Return(domain.ErrSlugTaken),
-	)
-	f.admins.EXPECT().Audit(gomock.Any(), gomock.Any(), "create_poll", "final", gomock.Any()).
-		Return(nil).Times(1)
-
-	body := createBody("final", "single", []string{"а", "б"})
-
-	require.Equal(t, http.StatusCreated, f.do(t, http.MethodPost, "/polls", body, f.token).Code)
-	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls", body, f.token).Code)
-}
-
-func TestCreatePoll_RejectsTooShortLeadTime(t *testing.T) {
-	t.Parallel()
-
-	f := newAdminFixture(t, auth.RoleEditor, time.Hour)
-	f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).Times(0)
-
-	opens := inWindow.Add(10 * time.Minute).Format(time.RFC3339)
-	closes := inWindow.Add(11 * time.Minute).Format(time.RFC3339)
-	body, err := json.Marshal(map[string]any{
-		"slug": "soon", "question": "?", "type": "single", "options": []string{"а", "б"},
-		"opens_at": opens, "closes_at": closes,
-	})
-	require.NoError(t, err)
-
-	w := f.do(t, http.MethodPost, "/polls", string(body), f.token)
-	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-}
-
-func TestFR6_TransitionsFollowFSM(t *testing.T) {
-	t.Parallel()
-
-	poll := &domain.Poll{
-		ID: uuid.New(), Slug: "final", Status: domain.StatusScheduled,
-		Options: []domain.Option{{Idx: 0, Text: "а"}}, Version: 1,
-		OpensAt: opensAt, ClosesAt: closesAt,
+	cases := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"невалидный опрос", domain.ErrInvalidPoll, http.StatusBadRequest},
+		{"slug занят", domain.ErrSlugTaken, http.StatusConflict},
+		{"переход не по FSM", domain.ErrBadTransition, http.StatusConflict},
+		{"нет опроса", domain.ErrNotFound, http.StatusNotFound},
+		{"конфликт версий", domain.ErrVersionConflict, http.StatusConflict},
 	}
-	f := newAdminFixture(t, auth.RoleEditor, 0)
 
-	f.polls.EXPECT().GetBySlug(gomock.Any(), "final").Return(poll, nil).AnyTimes()
-	f.polls.EXPECT().Transition(gomock.Any(), poll.ID, domain.StatusOpen, poll.Version).Return(nil).Times(1)
-	f.polls.EXPECT().CloseNow(gomock.Any(), poll.ID, poll.Version).Return(nil).Times(1)
-	gomock.InOrder(
-		f.admins.EXPECT().Audit(gomock.Any(), gomock.Any(), "open_poll", "final", gomock.Any()).Return(nil),
-		f.admins.EXPECT().Audit(gomock.Any(), gomock.Any(), "close_poll", "final", gomock.Any()).Return(nil),
-	)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
-	assert.Equal(t, domain.StatusOpen, poll.Status)
+			f := newAdminFixture(t, auth.RoleEditor)
+			f.polls.EXPECT().Create(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, tc.err)
+			f.polls.EXPECT().Open(gomock.Any(), gomock.Any(), "final").Return(nil, tc.err)
+			f.polls.EXPECT().Close(gomock.Any(), gomock.Any(), "final").Return(nil, tc.err)
+			f.polls.EXPECT().Results(gomock.Any(), "final").Return(polls.Outcome{}, tc.err)
 
-	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code,
-		"открытый опрос нельзя открыть заново")
-
-	require.Equal(t, http.StatusOK, f.do(t, http.MethodPost, "/polls/final/close", "", f.token).Code)
-	assert.Equal(t, domain.StatusOpen, poll.Status,
-		"ручное закрытие двигает closes_at, а не статус: closed выбросил бы опрос из выборки снапшотера")
-	assert.Equal(t, inWindow, poll.ClosesAt)
-	assert.False(t, poll.Window().IsOpenAt(inWindow), "после ручного закрытия приём закрыт")
-
-	assert.Equal(t, http.StatusConflict, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
-}
-
-func TestFR7_ViewerCannotWrite(t *testing.T) {
-	t.Parallel()
-
-	poll := &domain.Poll{ID: uuid.New(), Slug: "final", Status: domain.StatusScheduled, Version: 1}
-	f := newAdminFixture(t, auth.RoleViewer, 0)
-
-	f.polls.EXPECT().List(gomock.Any()).Return([]*domain.Poll{poll}, nil).Times(1)
-	f.polls.EXPECT().Create(gomock.Any(), gomock.Any()).Times(0)
-	f.polls.EXPECT().Transition(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-	assert.Equal(t, http.StatusOK, f.do(t, http.MethodGet, "/polls", "", f.token).Code,
-		"чтение доступно viewer")
-	assert.Equal(t, http.StatusForbidden,
-		f.do(t, http.MethodPost, "/polls", createBody("x", "single", []string{"а", "б"}), f.token).Code)
-	assert.Equal(t, http.StatusForbidden,
-		f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
-}
-
-func TestFR5_PercentagesAreOfBallotsNotVotes(t *testing.T) {
-	t.Parallel()
-
-	poll := &domain.Poll{
-		ID: uuid.New(), Slug: "final", Status: domain.StatusOpen, Version: 1,
-		Type:    domain.PollTypeMultiple,
-		Options: []domain.Option{{Idx: 0, Text: "а"}, {Idx: 1, Text: "б"}, {Idx: 2, Text: "в"}},
+			assert.Equal(t, tc.status, f.do(t, http.MethodPost, "/polls", createBody("final", "single", []string{"а", "б"}), f.token).Code)
+			assert.Equal(t, tc.status, f.do(t, http.MethodPost, "/polls/final/open", "", f.token).Code)
+			assert.Equal(t, tc.status, f.do(t, http.MethodPost, "/polls/final/close", "", f.token).Code)
+			assert.Equal(t, tc.status, f.do(t, http.MethodGet, "/polls/final/results", "", f.token).Code)
+		})
 	}
-	f := newAdminFixture(t, auth.RoleViewer, 0)
+}
 
-	f.polls.EXPECT().GetBySlug(gomock.Any(), "final").Return(poll, nil)
-	f.results.EXPECT().Get(gomock.Any(), poll.ID).
-		Return(domain.NewAggregateFrom(map[uint8]int64{0: 80, 1: 60, 2: 20}, 100), nil)
+func TestOpenAndClose_RenderTheReturnedPoll(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminFixture(t, auth.RoleEditor)
+	opened := samplePoll(domain.StatusOpen)
+	closed := samplePoll(domain.StatusOpen)
+	closed.ClosesAt = inWindow
+	f.polls.EXPECT().Open(gomock.Any(), gomock.Not(""), "final").Return(opened, nil)
+	f.polls.EXPECT().Close(gomock.Any(), gomock.Not(""), "final").Return(closed, nil)
+
+	w := f.do(t, http.MethodPost, "/polls/final/open", "", f.token)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"status":"open"`)
+
+	w = f.do(t, http.MethodPost, "/polls/final/close", "", f.token)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"closes_at":"`+inWindow.Format(time.RFC3339)+`"`)
+}
+
+func TestResults_RendersPercentagesAndFinality(t *testing.T) {
+	t.Parallel()
+
+	poll := samplePoll(domain.StatusOpen)
+	poll.Type = domain.PollTypeMultiple
+	poll.Options = append(poll.Options, domain.Option{Idx: 2, Text: "третий"})
+
+	f := newAdminFixture(t, auth.RoleViewer)
+	f.polls.EXPECT().Results(gomock.Any(), "final").Return(polls.Outcome{
+		Poll:      poll,
+		Aggregate: domain.NewAggregateFrom(map[uint8]int64{0: 80, 1: 60, 2: 20}, 100),
+		Final:     false,
+	}, nil)
 
 	w := f.do(t, http.MethodGet, "/polls/final/results", "", f.token)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -459,6 +423,7 @@ func TestFR5_PercentagesAreOfBallotsNotVotes(t *testing.T) {
 		Ballots int64 `json:"ballots"`
 		Final   bool  `json:"final"`
 		Options []struct {
+			Text    string  `json:"text"`
 			Votes   int64   `json:"votes"`
 			Percent float64 `json:"percent"`
 		} `json:"options"`
@@ -467,35 +432,23 @@ func TestFR5_PercentagesAreOfBallotsNotVotes(t *testing.T) {
 
 	require.Len(t, got.Options, 3)
 	assert.EqualValues(t, 100, got.Ballots)
+	assert.EqualValues(t, 80, got.Options[0].Votes)
 	assert.InDelta(t, 80.0, got.Options[0].Percent, 1e-9)
 	assert.InDelta(t, 60.0, got.Options[1].Percent, 1e-9)
-	assert.False(t, got.Final, "пока опрос открыт, подсчёт не окончен")
-
-	sum := got.Options[0].Percent + got.Options[1].Percent + got.Options[2].Percent
-	assert.Greater(t, sum, 100.0)
+	assert.False(t, got.Final)
 }
 
 func TestAdminLogin(t *testing.T) {
 	t.Parallel()
 
-	f := newAdminFixture(t, auth.RoleAdmin, 0)
-	f.expectAdmin(t, "admin", "secret", 2)
-	f.admins.EXPECT().ByLogin(gomock.Any(), "нет").Return(nil, domain.ErrNotFound).Times(1)
+	f := newAdminFixture(t, auth.RoleAdmin)
+	f.auth.EXPECT().Login(gomock.Any(), "admin", "secret").Return(auth.Session{Token: "jwt", Role: auth.RoleAdmin}, nil)
+	f.auth.EXPECT().Login(gomock.Any(), "admin", "нет").Return(auth.Session{}, auth.ErrInvalidCredentials)
+	f.auth.EXPECT().Login(gomock.Any(), "нет", "secret").Return(auth.Session{}, auth.ErrInvalidCredentials)
 
 	w := f.do(t, http.MethodPost, "/login", `{"login":"admin","password":"secret"}`, "")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var got struct {
-		Token string `json:"token"`
-		Role  string `json:"role"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-	assert.NotEmpty(t, got.Token)
-	assert.Equal(t, "admin", got.Role)
-
-	claims, err := f.tokens.Parse(got.Token)
-	require.NoError(t, err)
-	assert.Equal(t, auth.RoleAdmin, claims.Role)
+	assert.JSONEq(t, `{"token":"jwt","role":"admin"}`, w.Body.String())
 
 	wrongPass := f.do(t, http.MethodPost, "/login", `{"login":"admin","password":"нет"}`, "")
 	wrongUser := f.do(t, http.MethodPost, "/login", `{"login":"нет","password":"secret"}`, "")
@@ -503,57 +456,8 @@ func TestAdminLogin(t *testing.T) {
 	assert.Equal(t, wrongPass.Code, wrongUser.Code)
 	assert.Equal(t, wrongPass.Body.String(), wrongUser.Body.String(),
 		"ответ не имеет права выдавать, существует ли логин")
-}
 
-func TestAdminLogin_IsRateLimited(t *testing.T) {
-	t.Parallel()
-
-	f := newAdminFixture(t, auth.RoleAdmin, 0)
-	f.expectAdmin(t, "admin", "secret", 3)
-
-	for range 3 {
-		f.do(t, http.MethodPost, "/login", `{"login":"admin","password":"нет"}`, "")
-	}
-	w := f.do(t, http.MethodPost, "/login", `{"login":"admin","password":"secret"}`, "")
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code, "лимит попыток не сработал")
-	assert.NotEmpty(t, w.Header().Get("Retry-After"))
-}
-
-func TestResults_UnknownPollIsNotFound(t *testing.T) {
-	t.Parallel()
-
-	f := newAdminFixture(t, auth.RoleViewer, 0)
-	f.polls.EXPECT().GetBySlug(gomock.Any(), "нет").Return(nil, domain.ErrNotFound)
-	f.results.EXPECT().Get(gomock.Any(), gomock.Any()).Times(0)
-
-	assert.Equal(t, http.StatusNotFound, f.do(t, http.MethodGet, "/polls/нет/results", "", f.token).Code)
-}
-
-func TestFR5_ClosedPollReturnsFinalResult(t *testing.T) {
-	t.Parallel()
-
-	poll := &domain.Poll{
-		ID: uuid.New(), Slug: "final", Status: domain.StatusClosed, Version: 1,
-		Options: []domain.Option{{Idx: 0, Text: "а"}},
-	}
-	f := newAdminFixture(t, auth.RoleViewer, 0)
-
-	f.polls.EXPECT().GetBySlug(gomock.Any(), "final").Return(poll, nil)
-	f.results.EXPECT().Get(gomock.Any(), poll.ID).
-		Return(domain.NewAggregateFrom(map[uint8]int64{0: 42}, 42), nil)
-
-	w := f.do(t, http.MethodGet, "/polls/final/results", "", f.token)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	var got struct {
-		Ballots int64 `json:"ballots"`
-		Final   bool  `json:"final"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-
-	assert.EqualValues(t, 42, got.Ballots)
-	assert.True(t, got.Final)
+	assert.Equal(t, http.StatusBadRequest, f.do(t, http.MethodPost, "/login", `{"login":`, "").Code)
 }
 
 func okHealth() *health.Probes {
@@ -623,7 +527,7 @@ func TestAPIRouter_ServesProbesOutsideRequestMetrics(t *testing.T) {
 
 	seen := &routeLog{}
 	public, _ := newPublicHandler(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 0)
-	r := httpapi.APIRouter(okHealth(), public, newAdminFixture(t, auth.RoleAdmin, 0).admin, httpapi.NewPages("https://vote.example"), httpapi.RouterConfig{
+	r := httpapi.APIRouter(okHealth(), public, newAdminFixture(t, auth.RoleAdmin).admin, httpapi.NewPages("https://vote.example"), httpapi.RouterConfig{
 		VoteRateLimit:   100,
 		AdminRateLimit:  100,
 		RateWindow:      time.Minute,

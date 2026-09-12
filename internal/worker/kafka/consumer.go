@@ -108,10 +108,8 @@ func (c *Consumer) handleBatch(ctx context.Context, fetches kgo.Fetches) {
 }
 
 func (c *Consumer) handle(ctx context.Context, rec *kgo.Record) {
-	if rec.Context != nil {
-		if parent := trace.SpanContextFromContext(rec.Context); parent.IsValid() {
-			ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
-		}
+	if parent := remoteSpan(rec); parent.IsValid() {
+		ctx = trace.ContextWithRemoteSpanContext(ctx, parent)
 	}
 
 	var msg domain.VoteMessage
@@ -129,4 +127,11 @@ func (c *Consumer) handle(ctx context.Context, rec *kgo.Record) {
 			slog.Int64("partition", int64(rec.Partition)), slog.Int64("offset", rec.Offset),
 			slog.String("error", err.Error()))
 	}
+}
+
+func remoteSpan(rec *kgo.Record) trace.SpanContext {
+	if rec.Context == nil {
+		return trace.SpanContext{}
+	}
+	return trace.SpanContextFromContext(rec.Context) //nolint:contextcheck // the record carries the producer's span, not a request context
 }
