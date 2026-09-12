@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
+	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/auth"
+	"github.com/dubter/televote/internal/service/auth/mocks"
 )
 
 var testKey = []byte("0123456789abcdef0123456789abcdef")
@@ -151,34 +155,53 @@ func TestRole_AtLeastOrdering(t *testing.T) {
 	assert.False(t, auth.Role("").Valid())
 }
 
-func TestLoginLimiter_BlocksAfterN(t *testing.T) {
-	t.Parallel()
+func newAuthService(t *testing.T) (*auth.Service, *mocks.MockAdmins, *auth.TokenService) {
+	t.Helper()
 
-	l := auth.NewLoginLimiter(3, time.Minute, 100)
+	tokens, err := auth.NewTokenService(testKey, time.Hour)
+	require.NoError(t, err)
 
-	for i := range 3 {
-		assert.True(t, l.Allow("admin"), "попытка %d отвергнута преждевременно", i+1)
-	}
-	assert.False(t, l.Allow("admin"), "четвёртая попытка обязана быть отвергнута")
-
-	assert.True(t, l.Allow("другой-логин"), "лимит считается по логину, а не глобально")
-
-	l.Reset("admin")
-	assert.True(t, l.Allow("admin"), "после удачного входа счётчик обязан сбрасываться")
+	admins := mocks.NewMockAdmins(gomock.NewController(t))
+	svc, err := auth.NewService(admins, tokens)
+	require.NoError(t, err)
+	return svc, admins, tokens
 }
 
-func TestLoginLimiter_TableIsBounded(t *testing.T) {
+func TestLogin_IssuesATokenForValidCredentials(t *testing.T) {
 	t.Parallel()
 
-	const maxKeys = 64
-	l := auth.NewLoginLimiter(3, time.Minute, maxKeys)
+	svc, admins, tokens := newAuthService(t)
 
-	for i := range maxKeys * 20 {
-		l.Allow(strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune(i)))
-	}
+	hash, err := auth.HashPassword("secret")
+	require.NoError(t, err)
+	id := uuid.New()
+	admins.EXPECT().ByLogin(gomock.Any(), "admin").
+		Return(&domain.Admin{ID: id, Login: "admin", PasswordHash: hash, Role: string(auth.RoleAdmin)}, nil)
 
-	for range 3 {
-		assert.True(t, l.Allow("после-переполнения"))
-	}
-	assert.False(t, l.Allow("после-переполнения"))
+	session, err := svc.Login(context.Background(), "admin", "secret")
+	require.NoError(t, err)
+	assert.Equal(t, auth.RoleAdmin, session.Role)
+
+	claims, err := tokens.Parse(session.Token)
+	require.NoError(t, err)
+	assert.Equal(t, auth.RoleAdmin, claims.Role)
+	assert.Equal(t, id.String(), claims.Subject)
+}
+
+func TestLogin_WrongPasswordAndUnknownLoginAreIndistinguishable(t *testing.T) {
+	t.Parallel()
+
+	svc, admins, _ := newAuthService(t)
+
+	hash, err := auth.HashPassword("secret")
+	require.NoError(t, err)
+	admins.EXPECT().ByLogin(gomock.Any(), "admin").
+		Return(&domain.Admin{ID: uuid.New(), Login: "admin", PasswordHash: hash, Role: string(auth.RoleAdmin)}, nil)
+	admins.EXPECT().ByLogin(gomock.Any(), "нет").Return(nil, domain.ErrNotFound)
+
+	_, wrongPass := svc.Login(context.Background(), "admin", "нет")
+	_, wrongUser := svc.Login(context.Background(), "нет", "secret")
+
+	assert.ErrorIs(t, wrongPass, auth.ErrInvalidCredentials)
+	assert.ErrorIs(t, wrongUser, auth.ErrInvalidCredentials, "ответ не имеет права выдавать, существует ли логин")
 }

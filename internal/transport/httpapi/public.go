@@ -7,60 +7,44 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/dubter/televote/internal/domain"
-
 	"github.com/dubter/televote/internal/service/pollcfg"
 )
 
-type ConfigCache interface {
+type Voting interface {
+	Accept(ctx context.Context, slug, clientID string, choices []uint8) error
+}
+
+type ConfigLookup interface {
 	BySlug(slug string) (*pollcfg.HotConfig, bool)
-}
-
-type VoteSink interface {
-	Send(ctx context.Context, m domain.VoteMessage) error
-}
-
-type Observer interface {
-	VoteAccepted()
-	VoteRejected(reason string)
-	ProduceSeconds(d float64)
 }
 
 const defaultMaxVoteBody = 1024
 
 type PublicHandler struct {
-	cache   ConfigCache
-	sink    VoteSink
-	obs     Observer
+	voting  Voting
+	configs ConfigLookup
 	now     func() time.Time
 	maxBody int64
 }
 
-func NewPublicHandler(
-	cache ConfigCache, sink VoteSink, obs Observer, now func() time.Time, maxBody int64,
-) (*PublicHandler, error) {
-	if cache == nil {
-		return nil, errors.New("httpapi: poll config cache is required")
-	}
-	if sink == nil {
-		return nil, errors.New("httpapi: vote sink is required")
-	}
-	if now == nil {
-		now = time.Now
-	}
-	if obs == nil {
-		obs = noopObserver{}
+func NewPublicHandler(voting Voting, configs ConfigLookup, now func() time.Time, maxBody int64) (*PublicHandler, error) {
+	switch {
+	case voting == nil:
+		return nil, errors.New("httpapi: voting use case is required")
+	case configs == nil:
+		return nil, errors.New("httpapi: poll config lookup is required")
+	case now == nil:
+		return nil, errors.New("httpapi: clock is required")
 	}
 	if maxBody <= 0 {
 		maxBody = defaultMaxVoteBody
 	}
-	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now, maxBody: maxBody}, nil
+	return &PublicHandler{voting: voting, configs: configs, now: now, maxBody: maxBody}, nil
 }
 
 type serverTimeResponse struct {
@@ -84,7 +68,7 @@ type pollConfigResponse struct {
 }
 
 func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.cache.BySlug(chi.URLParam(r, "slug"))
+	cfg, ok := h.configs.BySlug(chi.URLParam(r, "slug"))
 	if !ok {
 		WriteError(w, r, errNotFound)
 		return
@@ -119,74 +103,16 @@ type voteResponse struct {
 }
 
 func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := h.cache.BySlug(chi.URLParam(r, "slug"))
-	if !ok {
-		h.obs.VoteRejected(reasonUnknownPoll)
-		WriteError(w, r, errNotFound)
-		return
-	}
-
 	var req voteRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, h.maxBody)).Decode(&req); err != nil {
-		h.obs.VoteRejected(reasonMalformed)
-		if errors.Is(err, io.EOF) || errors.As(err, new(*http.MaxBytesError)) {
-			WriteError(w, r, fmt.Errorf("%w: request body", errBadRequest))
-			return
-		}
-		WriteError(w, r, fmt.Errorf("%w: %w", errBadRequest, err))
+		WriteError(w, r, fmt.Errorf("%w: request body", errBadRequest))
 		return
 	}
 
-	if err := cfg.Rules.Validate(req.Choices); err != nil {
-		h.obs.VoteRejected(reasonInvalidChoices)
+	if err := h.voting.Accept(r.Context(), chi.URLParam(r, "slug"), req.Voter, req.Choices); err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	if !cfg.Window.IsOpenAt(h.now()) {
-		h.obs.VoteRejected(reasonPollClosed)
-		WriteError(w, r, domain.ErrPollClosed)
-		return
-	}
-
-	voterID, err := domain.DeriveVoterID(cfg.Salt, req.Voter)
-	if err != nil {
-		h.obs.VoteRejected(reasonBadVoter)
-		WriteError(w, r, err)
-		return
-	}
-
-	msg := domain.VoteMessage{
-		PollID:     cfg.ID,
-		VoterID:    voterID.Hex(),
-		Choices:    req.Choices,
-		ProducedAt: h.now().UTC(),
-	}
-
-	start := h.now()
-	if err := h.sink.Send(r.Context(), msg); err != nil {
-		h.obs.VoteRejected(reasonUnavailable)
-		w.Header().Set("Retry-After", "1")
-		WriteError(w, r, fmt.Errorf("%w: %w", errUnavailable, err))
-		return
-	}
-
-	h.obs.ProduceSeconds(h.now().Sub(start).Seconds())
-	h.obs.VoteAccepted()
 
 	writeJSON(w, http.StatusAccepted, voteResponse{Status: "accepted"})
 }
-
-const (
-	reasonUnknownPoll    = "unknown_poll"
-	reasonMalformed      = "malformed"
-	reasonInvalidChoices = "invalid_choices"
-	reasonPollClosed     = "poll_closed"
-	reasonBadVoter       = "bad_voter"
-	reasonUnavailable    = "unavailable"
-)
-
-type noopObserver struct{}
-
-func (noopObserver) VoteAccepted()          {}
-func (noopObserver) VoteRejected(string)    {}
-func (noopObserver) ProduceSeconds(float64) {}

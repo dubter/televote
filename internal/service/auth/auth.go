@@ -1,20 +1,24 @@
 package auth
 
+//go:generate mockgen -source=auth.go -destination=mocks/auth.go -package=mocks
+
 import (
+	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/alexedwards/argon2id"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	"github.com/dubter/televote/internal/domain"
 )
 
 var (
-	ErrInvalidToken    = errors.New("invalid_token")
-	ErrWeakKey         = errors.New("weak_signing_key")
-	ErrTooManyAttempts = errors.New("too_many_attempts")
+	ErrInvalidToken       = errors.New("invalid_token")
+	ErrWeakKey            = errors.New("weak_signing_key")
+	ErrInvalidCredentials = errors.New("invalid_credentials")
 )
 
 const minKeyLen = 32
@@ -131,70 +135,48 @@ func (t *TokenService) Parse(raw string) (*Claims, error) {
 	return &claims, nil
 }
 
-type LoginLimiter struct {
-	mu       sync.Mutex
-	attempts map[string]*attempt
-	limit    int
-	window   time.Duration
-	maxKeys  int
-	now      func() time.Time
+type Admins interface {
+	ByLogin(ctx context.Context, login string) (*domain.Admin, error)
 }
 
-type attempt struct {
-	count int
-	until time.Time
+type Session struct {
+	Token string
+	Role  Role
 }
 
-func NewLoginLimiter(limit int, window time.Duration, maxKeys int) *LoginLimiter {
-	if limit <= 0 {
-		limit = 5
-	}
-	if window <= 0 {
-		window = time.Minute
-	}
-	if maxKeys <= 0 {
-		maxKeys = 10_000
-	}
-	return &LoginLimiter{
-		attempts: make(map[string]*attempt),
-		limit:    limit,
-		window:   window,
-		maxKeys:  maxKeys,
-		now:      time.Now,
-	}
+type Service struct {
+	admins Admins
+	tokens *TokenService
 }
 
-func (l *LoginLimiter) Allow(login string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := l.now()
-	a, ok := l.attempts[login]
-	if !ok || now.After(a.until) {
-		if len(l.attempts) >= l.maxKeys {
-			l.evictExpiredLocked(now)
-		}
-		l.attempts[login] = &attempt{count: 1, until: now.Add(l.window)}
-		return true
+func NewService(admins Admins, tokens *TokenService) (*Service, error) {
+	switch {
+	case admins == nil:
+		return nil, errors.New("auth: admin store is required")
+	case tokens == nil:
+		return nil, errors.New("auth: token service is required")
 	}
-
-	a.count++
-	return a.count <= l.limit
+	return &Service{admins: admins, tokens: tokens}, nil
 }
 
-func (l *LoginLimiter) Reset(login string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.attempts, login)
+func (s *Service) Login(ctx context.Context, login, password string) (Session, error) {
+	admin, err := s.admins.ByLogin(ctx, login)
+	if err != nil {
+		return Session{}, fmt.Errorf("%w: %w", ErrInvalidCredentials, err)
+	}
+	ok, err := VerifyPassword(admin.PasswordHash, password)
+	if err != nil || !ok {
+		return Session{}, ErrInvalidCredentials
+	}
+
+	role := Role(admin.Role)
+	token, err := s.tokens.Issue(admin.ID, role)
+	if err != nil {
+		return Session{}, err
+	}
+	return Session{Token: token, Role: role}, nil
 }
 
-func (l *LoginLimiter) evictExpiredLocked(now time.Time) {
-	for login, a := range l.attempts {
-		if now.After(a.until) {
-			delete(l.attempts, login)
-		}
-	}
-	if len(l.attempts) >= l.maxKeys {
-		clear(l.attempts)
-	}
+func (s *Service) Parse(raw string) (*Claims, error) {
+	return s.tokens.Parse(raw)
 }

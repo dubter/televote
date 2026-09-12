@@ -33,15 +33,14 @@ type LagReader interface {
 }
 
 type Snapshotter struct {
-	agg      Aggregator
-	results  Results
-	polls    Polls
-	lag      LagReader
-	interval time.Duration
-	grace    time.Duration
-	now      func() time.Time
-	log      *slog.Logger
-	obs      Observer
+	agg     Aggregator
+	results Results
+	polls   Polls
+	lag     LagReader
+	grace   time.Duration
+	now     func() time.Time
+	log     *slog.Logger
+	obs     Observer
 }
 
 type Observer interface {
@@ -50,7 +49,6 @@ type Observer interface {
 }
 
 type Config struct {
-	Interval time.Duration
 	Grace    time.Duration
 	Now      func() time.Time
 	Log      *slog.Logger
@@ -66,9 +64,6 @@ func New(agg Aggregator, results Results, polls Polls, lag LagReader, cfg Config
 	case polls == nil:
 		return nil, errors.New("snapshot: poll repository is not set")
 	}
-	if cfg.Interval <= 0 {
-		cfg.Interval = 30 * time.Second
-	}
 	if cfg.Grace <= 0 {
 		cfg.Grace = 30 * time.Second
 	}
@@ -80,26 +75,9 @@ func New(agg Aggregator, results Results, polls Polls, lag LagReader, cfg Config
 	}
 	return &Snapshotter{
 		agg: agg, results: results, polls: polls, lag: lag,
-		interval: cfg.Interval, grace: cfg.Grace, now: cfg.Now, log: cfg.Log,
+		grace: cfg.Grace, now: cfg.Now, log: cfg.Log,
 		obs: cfg.Observer,
 	}, nil
-}
-
-func (s *Snapshotter) Run(ctx context.Context) {
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.Tick(ctx); err != nil {
-				s.log.WarnContext(ctx, "snapshot: cycle finished with an error",
-					slog.String("error", err.Error()))
-			}
-		}
-	}
 }
 
 func (s *Snapshotter) Tick(ctx context.Context) error {

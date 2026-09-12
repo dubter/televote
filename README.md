@@ -156,15 +156,16 @@ cmd/{api,consumer,snapshot,migrate}
 
 internal/
   domain     entities, voterID, choice rules, FSM, aggregate, capacity calculation
-  service    consumer, snapshot, pollcfg, capacity, auth
-  transport  httpapi — inbound adapters: router, handlers, web/
-  adapter    postgres, redis, producer — outbound adapters
+  service    use cases: voting, counting, snapshot, polls, auth; pollcfg, capacity
+  transport  httpapi — HTTP in, use case call, JSON out; every route in router.go
+  worker     kafka (fetch → counting.Count → commit), snapshot (tick → snapshot.Tick)
+  adapter    postgres, redis, producer — implement interfaces declared in service
   platform   app, config, metrics, observability, health, httpx
 ```
 
-Dependencies point inward: `internal/domain` imports nothing from the project, services
-never see `rueidis`/`pgx`, handlers never see `rueidis`/`pgx`/`kgo`, and `depguard` enforces
-all of it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
+Dependencies point inward: `internal/domain` imports nothing from the project, services see
+only domain and their own interfaces, handlers and workers see only services and domain, and
+`depguard` enforces all of it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
 on consumer lag, the snapshotter does not scale at all. The local stand-up brings up the same
 topology.
 

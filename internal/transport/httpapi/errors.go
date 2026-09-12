@@ -7,6 +7,7 @@ import (
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/platform/httpx"
+	"github.com/dubter/televote/internal/service/auth"
 )
 
 type errorResponse struct {
@@ -19,6 +20,10 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := classify(err)
+
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
 
 	if status >= http.StatusInternalServerError {
 		slog.ErrorContext(r.Context(), "request failed",
@@ -44,19 +49,19 @@ func classify(err error) (status int, code string) {
 		return http.StatusConflict, "poll_closed"
 	case errors.Is(err, domain.ErrBadTransition):
 		return http.StatusConflict, "bad_transition"
-	case errors.Is(err, errSlugTaken):
+	case errors.Is(err, domain.ErrSlugTaken):
 		return http.StatusConflict, "slug_taken"
 
 	case errors.Is(err, errNotFound), errors.Is(err, domain.ErrNotFound):
 		return http.StatusNotFound, "not_found"
 	case errors.Is(err, domain.ErrVersionConflict):
 		return http.StatusConflict, "version_conflict"
-	case errors.Is(err, errUnauthorized):
+	case errors.Is(err, errUnauthorized), errors.Is(err, auth.ErrInvalidCredentials):
 		return http.StatusUnauthorized, "unauthorized"
 	case errors.Is(err, errForbidden):
 		return http.StatusForbidden, "forbidden"
 
-	case errors.Is(err, errUnavailable):
+	case errors.Is(err, domain.ErrQueueUnavailable), errors.Is(err, domain.ErrStoreUnavailable):
 		return http.StatusServiceUnavailable, "unavailable"
 
 	default:
@@ -69,6 +74,4 @@ var (
 	errNotFound     = errors.New("not_found")
 	errUnauthorized = errors.New("unauthorized")
 	errForbidden    = errors.New("forbidden")
-	errUnavailable  = errors.New("unavailable")
-	errSlugTaken    = errors.New("slug_taken")
 )

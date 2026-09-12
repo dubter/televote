@@ -17,14 +17,13 @@ import (
 	"github.com/dubter/televote/internal/platform/observability"
 	"github.com/dubter/televote/internal/service/auth"
 	"github.com/dubter/televote/internal/service/pollcfg"
+	"github.com/dubter/televote/internal/service/polls"
 	"github.com/dubter/televote/internal/transport/httpapi"
 )
 
 const (
 	adminRateLimit      = 120
 	lookupRefreshFactor = 3
-	loginAttempts       = 5
-	loginLimiterKeys    = 10_000
 )
 
 func (rt *runtime) openPostgres(ctx context.Context, dsn string) (*postgres.DB, error) {
@@ -54,12 +53,12 @@ func (rt *runtime) openKafka(opts ...kgo.Opt) (*kgo.Client, error) {
 }
 
 func (rt *runtime) warmPollCache(ctx context.Context, db *postgres.DB) (*pollcfg.Cache, error) {
-	polls, err := postgres.NewPollRepo(db)
+	pollRepo, err := postgres.NewPollRepo(db)
 	if err != nil {
 		return nil, fmt.Errorf("poll repository (read): %w", err)
 	}
 
-	cache, err := pollcfg.NewCache(polls, rt.cfg.PollConfigRefresh, pollcfg.WithLogger(rt.log))
+	cache, err := pollcfg.NewCache(pollRepo, rt.cfg.PollConfigRefresh, pollcfg.WithLogger(rt.log))
 	if err != nil {
 		return nil, fmt.Errorf("poll config cache: %w", err)
 	}
@@ -72,7 +71,7 @@ func (rt *runtime) warmPollCache(ctx context.Context, db *postgres.DB) (*pollcfg
 }
 
 func (rt *runtime) buildAdmin(ctx context.Context, db *postgres.DB) (*httpapi.AdminHandler, error) {
-	polls, err := postgres.NewPollRepo(db)
+	pollRepo, err := postgres.NewPollRepo(db)
 	if err != nil {
 		return nil, fmt.Errorf("poll repository: %w", err)
 	}
@@ -85,17 +84,25 @@ func (rt *runtime) buildAdmin(ctx context.Context, db *postgres.DB) (*httpapi.Ad
 		return nil, fmt.Errorf("admin repository: %w", err)
 	}
 
-	tokens, err := auth.NewTokenService(adminJWTBytes(rt.cfg.AdminJWTKey), rt.cfg.AdminJWTTTL)
-	if err != nil {
-		return nil, fmt.Errorf("token service: %w", err)
-	}
-
 	if err := rt.bootstrapAdmin(ctx, admins); err != nil {
 		return nil, err
 	}
 
-	limiter := auth.NewLoginLimiter(loginAttempts, time.Minute, loginLimiterKeys)
-	return httpapi.NewAdminHandler(polls, results, admins, tokens, limiter, time.Now, rt.cfg.PollMinLeadTime)
+	tokens, err := auth.NewTokenService(adminJWTBytes(rt.cfg.AdminJWTKey), rt.cfg.AdminJWTTTL)
+	if err != nil {
+		return nil, fmt.Errorf("token service: %w", err)
+	}
+	authn, err := auth.NewService(admins, tokens)
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+
+	manager, err := polls.New(pollRepo, results, admins, time.Now, rt.cfg.PollMinLeadTime, rt.log)
+	if err != nil {
+		return nil, fmt.Errorf("polls: %w", err)
+	}
+
+	return httpapi.NewAdminHandler(manager, authn)
 }
 
 func (rt *runtime) bootstrapAdmin(ctx context.Context, admins *postgres.AdminRepo) error {
