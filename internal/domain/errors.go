@@ -22,4 +22,6 @@ var (
 	ErrInvalidVote = errors.New("invalid_vote")
 
 	ErrStoreUnavailable = errors.New("store_unavailable")
+
+	ErrQueueUnavailable = errors.New("queue_unavailable")
 )

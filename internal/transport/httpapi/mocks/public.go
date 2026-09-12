@@ -13,37 +13,74 @@ import (
 	context "context"
 	reflect "reflect"
 
-	domain "github.com/dubter/televote/internal/domain"
 	pollcfg "github.com/dubter/televote/internal/service/pollcfg"
 	gomock "go.uber.org/mock/gomock"
 )
 
-// MockConfigCache is a mock of ConfigCache interface.
-type MockConfigCache struct {
+// MockVoting is a mock of Voting interface.
+type MockVoting struct {
 	ctrl     *gomock.Controller
-	recorder *MockConfigCacheMockRecorder
+	recorder *MockVotingMockRecorder
 	isgomock struct{}
 }
 
-// MockConfigCacheMockRecorder is the mock recorder for MockConfigCache.
-type MockConfigCacheMockRecorder struct {
-	mock *MockConfigCache
+// MockVotingMockRecorder is the mock recorder for MockVoting.
+type MockVotingMockRecorder struct {
+	mock *MockVoting
 }
 
-// NewMockConfigCache creates a new mock instance.
-func NewMockConfigCache(ctrl *gomock.Controller) *MockConfigCache {
-	mock := &MockConfigCache{ctrl: ctrl}
-	mock.recorder = &MockConfigCacheMockRecorder{mock}
+// NewMockVoting creates a new mock instance.
+func NewMockVoting(ctrl *gomock.Controller) *MockVoting {
+	mock := &MockVoting{ctrl: ctrl}
+	mock.recorder = &MockVotingMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockConfigCache) EXPECT() *MockConfigCacheMockRecorder {
+func (m *MockVoting) EXPECT() *MockVotingMockRecorder {
+	return m.recorder
+}
+
+// Accept mocks base method.
+func (m *MockVoting) Accept(ctx context.Context, slug, clientID string, choices []uint8) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Accept", ctx, slug, clientID, choices)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Accept indicates an expected call of Accept.
+func (mr *MockVotingMockRecorder) Accept(ctx, slug, clientID, choices any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Accept", reflect.TypeOf((*MockVoting)(nil).Accept), ctx, slug, clientID, choices)
+}
+
+// MockConfigLookup is a mock of ConfigLookup interface.
+type MockConfigLookup struct {
+	ctrl     *gomock.Controller
+	recorder *MockConfigLookupMockRecorder
+	isgomock struct{}
+}
+
+// MockConfigLookupMockRecorder is the mock recorder for MockConfigLookup.
+type MockConfigLookupMockRecorder struct {
+	mock *MockConfigLookup
+}
+
+// NewMockConfigLookup creates a new mock instance.
+func NewMockConfigLookup(ctrl *gomock.Controller) *MockConfigLookup {
+	mock := &MockConfigLookup{ctrl: ctrl}
+	mock.recorder = &MockConfigLookupMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockConfigLookup) EXPECT() *MockConfigLookupMockRecorder {
 	return m.recorder
 }
 
 // BySlug mocks base method.
-func (m *MockConfigCache) BySlug(slug string) (*pollcfg.HotConfig, bool) {
+func (m *MockConfigLookup) BySlug(slug string) (*pollcfg.HotConfig, bool) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "BySlug", slug)
 	ret0, _ := ret[0].(*pollcfg.HotConfig)
@@ -52,105 +89,7 @@ func (m *MockConfigCache) BySlug(slug string) (*pollcfg.HotConfig, bool) {
 }
 
 // BySlug indicates an expected call of BySlug.
-func (mr *MockConfigCacheMockRecorder) BySlug(slug any) *gomock.Call {
+func (mr *MockConfigLookupMockRecorder) BySlug(slug any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BySlug", reflect.TypeOf((*MockConfigCache)(nil).BySlug), slug)
-}
-
-// MockVoteSink is a mock of VoteSink interface.
-type MockVoteSink struct {
-	ctrl     *gomock.Controller
-	recorder *MockVoteSinkMockRecorder
-	isgomock struct{}
-}
-
-// MockVoteSinkMockRecorder is the mock recorder for MockVoteSink.
-type MockVoteSinkMockRecorder struct {
-	mock *MockVoteSink
-}
-
-// NewMockVoteSink creates a new mock instance.
-func NewMockVoteSink(ctrl *gomock.Controller) *MockVoteSink {
-	mock := &MockVoteSink{ctrl: ctrl}
-	mock.recorder = &MockVoteSinkMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockVoteSink) EXPECT() *MockVoteSinkMockRecorder {
-	return m.recorder
-}
-
-// Send mocks base method.
-func (m_2 *MockVoteSink) Send(ctx context.Context, m domain.VoteMessage) error {
-	m_2.ctrl.T.Helper()
-	ret := m_2.ctrl.Call(m_2, "Send", ctx, m)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Send indicates an expected call of Send.
-func (mr *MockVoteSinkMockRecorder) Send(ctx, m any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Send", reflect.TypeOf((*MockVoteSink)(nil).Send), ctx, m)
-}
-
-// MockObserver is a mock of Observer interface.
-type MockObserver struct {
-	ctrl     *gomock.Controller
-	recorder *MockObserverMockRecorder
-	isgomock struct{}
-}
-
-// MockObserverMockRecorder is the mock recorder for MockObserver.
-type MockObserverMockRecorder struct {
-	mock *MockObserver
-}
-
-// NewMockObserver creates a new mock instance.
-func NewMockObserver(ctrl *gomock.Controller) *MockObserver {
-	mock := &MockObserver{ctrl: ctrl}
-	mock.recorder = &MockObserverMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockObserver) EXPECT() *MockObserverMockRecorder {
-	return m.recorder
-}
-
-// ProduceSeconds mocks base method.
-func (m *MockObserver) ProduceSeconds(d float64) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ProduceSeconds", d)
-}
-
-// ProduceSeconds indicates an expected call of ProduceSeconds.
-func (mr *MockObserverMockRecorder) ProduceSeconds(d any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProduceSeconds", reflect.TypeOf((*MockObserver)(nil).ProduceSeconds), d)
-}
-
-// VoteAccepted mocks base method.
-func (m *MockObserver) VoteAccepted() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "VoteAccepted")
-}
-
-// VoteAccepted indicates an expected call of VoteAccepted.
-func (mr *MockObserverMockRecorder) VoteAccepted() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VoteAccepted", reflect.TypeOf((*MockObserver)(nil).VoteAccepted))
-}
-
-// VoteRejected mocks base method.
-func (m *MockObserver) VoteRejected(reason string) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "VoteRejected", reason)
-}
-
-// VoteRejected indicates an expected call of VoteRejected.
-func (mr *MockObserverMockRecorder) VoteRejected(reason any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VoteRejected", reflect.TypeOf((*MockObserver)(nil).VoteRejected), reason)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BySlug", reflect.TypeOf((*MockConfigLookup)(nil).BySlug), slug)
 }

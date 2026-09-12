@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,30 +63,28 @@ func hotConfig(t *testing.T, pollType domain.PollType, minChoices, maxChoices ui
 }
 
 func newPublicHandler(
-	t *testing.T, cfg *pollcfg.HotConfig, now time.Time, obs httpapi.Observer, maxBody int64,
-) (*httpapi.PublicHandler, *mocks.MockVoteSink) {
+	t *testing.T, cfg *pollcfg.HotConfig, now time.Time, maxBody int64,
+) (*httpapi.PublicHandler, *mocks.MockVoting) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
 
-	cache := mocks.NewMockConfigCache(ctrl)
+	cache := mocks.NewMockConfigLookup(ctrl)
 	cache.EXPECT().BySlug(cfg.Slug).Return(cfg, true).AnyTimes()
 	cache.EXPECT().BySlug(gomock.Not(cfg.Slug)).Return(nil, false).AnyTimes()
 
-	sink := mocks.NewMockVoteSink(ctrl)
+	voting := mocks.NewMockVoting(ctrl)
 
-	h, err := httpapi.NewPublicHandler(cache, sink, obs, func() time.Time { return now }, maxBody)
+	h, err := httpapi.NewPublicHandler(voting, cache, func() time.Time { return now }, maxBody)
 	require.NoError(t, err)
-	return h, sink
+	return h, voting
 }
 
-func newPublic(
-	t *testing.T, cfg *pollcfg.HotConfig, now time.Time, obs httpapi.Observer, maxBody int64,
-) (http.Handler, *mocks.MockVoteSink) {
+func newPublic(t *testing.T, cfg *pollcfg.HotConfig, now time.Time, maxBody int64) (http.Handler, *mocks.MockVoting) {
 	t.Helper()
 
-	h, sink := newPublicHandler(t, cfg, now, obs, maxBody)
-	return httpapi.PublicRoutes(h), sink
+	h, voting := newPublicHandler(t, cfg, now, maxBody)
+	return httpapi.PublicRoutes(h), voting
 }
 
 func postVote(t *testing.T, h http.Handler, slug, body string) *httptest.ResponseRecorder {
@@ -101,20 +98,11 @@ func postVote(t *testing.T, h http.Handler, slug, body string) *httptest.Respons
 	return w
 }
 
-func TestFR3_VoteWithoutRegistration(t *testing.T) {
+func TestVote_AcceptedIs202NotCounted(t *testing.T) {
 	t.Parallel()
 
-	ctrl := gomock.NewController(t)
-	obs := mocks.NewMockObserver(ctrl)
-	obs.EXPECT().ProduceSeconds(gomock.Any()).Times(1)
-	obs.EXPECT().VoteAccepted().Times(1)
-
-	h, sink := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, obs, 0)
-
-	var sent domain.VoteMessage
-	sink.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, m domain.VoteMessage) error { sent = m; return nil },
-	).Times(1)
+	h, voting := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 0)
+	voting.EXPECT().Accept(gomock.Any(), "final", testVoter, []uint8{1}).Return(nil)
 
 	w := postVote(t, h, "final", `{"choices":[1],"voter":"`+testVoter+`"}`)
 
@@ -125,118 +113,61 @@ func TestFR3_VoteWithoutRegistration(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, "accepted", got.Status, "200 counted было бы враньём: голос ещё не посчитан")
-
-	assert.Equal(t, []uint8{1}, sent.Choices)
-	assert.Len(t, sent.VoterID, 32, "в Kafka уезжает выведенный сервером ключ")
-	assert.NotContains(t, sent.VoterID, "9b2f4c6e", "присланное клиентом значение не уезжает как есть")
-	assert.Equal(t, inWindow.UTC(), sent.ProducedAt, "по этой метке консьюмер проверит окно")
 }
 
-func TestFR3_RejectVoteWithoutVoter(t *testing.T) {
+func TestVote_MapsUseCaseErrorsToStatuses(t *testing.T) {
 	t.Parallel()
 
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
-
-	cases := map[string]string{
-		"пустой voter":      `{"choices":[1],"voter":""}`,
-		"voter отсутствует": `{"choices":[1]}`,
-		"константа клиента": `{"choices":[1],"voter":"undefined"}`,
-		"нулевой uuid":      `{"choices":[1],"voter":"00000000-0000-0000-0000-000000000000"}`,
+	cases := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"нет опроса", domain.ErrNotFound, http.StatusNotFound},
+		{"выбор вне правил", domain.ErrInvalidChoices, http.StatusBadRequest},
+		{"плохой voter", domain.ErrBadClientID, http.StatusBadRequest},
+		{"окно закрыто", domain.ErrPollClosed, http.StatusConflict},
+		{"очередь недоступна", fmt.Errorf("%w: брокеры недоступны", domain.ErrQueueUnavailable), http.StatusServiceUnavailable},
+		{"битая соль — вина сервера", domain.ErrBadSalt, http.StatusInternalServerError},
 	}
 
-	for name, body := range cases {
-		t.Run(name, func(t *testing.T) {
-			w := postVote(t, h, "final", body)
-			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-		})
-	}
-}
-
-func TestFR1_2_RejectChoicesOutsideRules(t *testing.T) {
-	t.Parallel()
-
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeMultiple, 2, 2), inWindow, nil, 0)
-
-	cases := map[string]string{
-		"ниже MinChoices":     `{"choices":[0],"voter":"` + testVoter + `"}`,
-		"выше MaxChoices":     `{"choices":[0,1,2],"voter":"` + testVoter + `"}`,
-		"индекс за пределами": `{"choices":[0,9],"voter":"` + testVoter + `"}`,
-		"дубль индекса":       `{"choices":[1,1],"voter":"` + testVoter + `"}`,
-		"пустой выбор":        `{"choices":[],"voter":"` + testVoter + `"}`,
-	}
-
-	for name, body := range cases {
-		t.Run(name, func(t *testing.T) {
-			w := postVote(t, h, "final", body)
-			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
-		})
-	}
-}
-
-func TestFR8_VoteOutsideWindowIsRejected(t *testing.T) {
-	t.Parallel()
-
-	body := `{"choices":[1],"voter":"` + testVoter + `"}`
-
-	cases := map[string]time.Time{
-		"до открытия":      opensAt.Add(-time.Second),
-		"ровно в закрытие": closesAt,
-		"после закрытия":   closesAt.Add(time.Minute),
-	}
-
-	for name, now := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), now, nil, 0)
-			w := postVote(t, h, "final", body)
+			h, voting := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 0)
+			voting.EXPECT().Accept(gomock.Any(), "final", testVoter, []uint8{1}).Return(tc.err)
 
-			assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+			w := postVote(t, h, "final", `{"choices":[1],"voter":"`+testVoter+`"}`)
+			assert.Equal(t, tc.status, w.Code, w.Body.String())
+			if tc.status == http.StatusServiceUnavailable {
+				assert.NotEmpty(t, w.Header().Get("Retry-After"), "клиенту нужно знать, когда повторить")
+			}
 		})
 	}
 }
 
-func TestNFR9_BodySizeLimitEnforced(t *testing.T) {
+func TestVote_MalformedBodyNeverReachesTheUseCase(t *testing.T) {
 	t.Parallel()
 
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 128)
+	h, voting := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 128)
+	voting.EXPECT().Accept(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-	body := fmt.Sprintf(`{"choices":[1],"voter":%q}`, strings.Repeat("x", 256))
-	w := postVote(t, h, "final", body)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestVote_KafkaDownReturns503(t *testing.T) {
-	t.Parallel()
-
-	ctrl := gomock.NewController(t)
-	obs := mocks.NewMockObserver(ctrl)
-	obs.EXPECT().VoteRejected("unavailable").Times(1)
-	obs.EXPECT().VoteAccepted().Times(0)
-
-	h, sink := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, obs, 0)
-	sink.EXPECT().Send(gomock.Any(), gomock.Any()).Return(errors.New("брокеры недоступны"))
-
-	w := postVote(t, h, "final", `{"choices":[1],"voter":"`+testVoter+`"}`)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.NotEmpty(t, w.Header().Get("Retry-After"))
-}
-
-func TestVote_UnknownPollIsNotFound(t *testing.T) {
-	t.Parallel()
-
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
-
-	w := postVote(t, h, "нет-такого", `{"choices":[1],"voter":"`+testVoter+`"}`)
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	for name, body := range map[string]string{
+		"не JSON":         `{"choices":[1],`,
+		"пустое тело":     ``,
+		"слишком большое": fmt.Sprintf(`{"choices":[1],"voter":%q}`, strings.Repeat("x", 256)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, http.StatusBadRequest, postVote(t, h, "final", body).Code)
+		})
+	}
 }
 
 func TestPollConfig_IsCacheableAndCarriesNoPerRequestData(t *testing.T) {
 	t.Parallel()
 
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeMultiple, 1, 2), inWindow, nil, 0)
+	h, _ := newPublic(t, hotConfig(t, domain.PollTypeMultiple, 1, 2), inWindow, 0)
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/polls/final", nil))
@@ -259,7 +190,7 @@ func TestPollConfig_IsCacheableAndCarriesNoPerRequestData(t *testing.T) {
 func TestServerTime_IsNeverCachedAndReflectsTheClock(t *testing.T) {
 	t.Parallel()
 
-	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
+	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 0)
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/time", nil))
@@ -274,24 +205,6 @@ func TestServerTime_IsNeverCachedAndReflectsTheClock(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, inWindow.Format(time.RFC3339), got.ServerTime,
 		"клиент работает по серверному времени: у зрителя часы могут врать")
-}
-
-func TestVote_SameVoterYieldsSameDedupKey(t *testing.T) {
-	t.Parallel()
-
-	h, sink := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
-
-	var sent []domain.VoteMessage
-	sink.EXPECT().Send(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, m domain.VoteMessage) error { sent = append(sent, m); return nil },
-	).Times(2)
-
-	body := `{"choices":[1],"voter":"` + testVoter + `"}`
-	require.Equal(t, http.StatusAccepted, postVote(t, h, "final", body).Code)
-	require.Equal(t, http.StatusAccepted, postVote(t, h, "final", body).Code)
-
-	require.Len(t, sent, 2, "приём не дедуплицирует — это делает консьюмер")
-	assert.Equal(t, sent[0].VoterID, sent[1].VoterID)
 }
 
 type adminFixture struct {
@@ -709,7 +622,7 @@ func TestAPIRouter_ServesProbesOutsideRequestMetrics(t *testing.T) {
 	t.Parallel()
 
 	seen := &routeLog{}
-	public, _ := newPublicHandler(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
+	public, _ := newPublicHandler(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, 0)
 	r := httpapi.APIRouter(okHealth(), public, newAdminFixture(t, auth.RoleAdmin, 0).admin, httpapi.NewPages("https://vote.example"), httpapi.RouterConfig{
 		VoteRateLimit:   100,
 		AdminRateLimit:  100,

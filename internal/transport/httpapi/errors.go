@@ -20,6 +20,10 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := classify(err)
 
+	if status == http.StatusServiceUnavailable {
+		w.Header().Set("Retry-After", "1")
+	}
+
 	if status >= http.StatusInternalServerError {
 		slog.ErrorContext(r.Context(), "request failed",
 			slog.String("path", r.URL.Path),
@@ -56,7 +60,7 @@ func classify(err error) (status int, code string) {
 	case errors.Is(err, errForbidden):
 		return http.StatusForbidden, "forbidden"
 
-	case errors.Is(err, errUnavailable):
+	case errors.Is(err, domain.ErrQueueUnavailable), errors.Is(err, domain.ErrStoreUnavailable):
 		return http.StatusServiceUnavailable, "unavailable"
 
 	default:
@@ -69,6 +73,5 @@ var (
 	errNotFound     = errors.New("not_found")
 	errUnauthorized = errors.New("unauthorized")
 	errForbidden    = errors.New("forbidden")
-	errUnavailable  = errors.New("unavailable")
 	errSlugTaken    = errors.New("slug_taken")
 )
