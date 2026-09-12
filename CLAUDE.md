@@ -1,108 +1,108 @@
 # Televote
 
-Сервис анонимного голосования под пик ТВ-эфира: 100 млн зрителей, окно 60 секунд.
-В окне эфира — **только приём** в Kafka. Дедуп и подсчёт делает консьюмер, результат
-eventually через ~5 минут дренажа. ТЗ свежести не требует, и это определило форму системы.
+Anonymous voting at the peak of a TV broadcast: 100M viewers, a 60-second window.
+Inside that window the system **only accepts**. Deduplication and counting are done by the
+consumer, and the result lands eventually, after roughly 5 minutes of drain. The spec does not
+require freshness, and that is what gave the system its shape.
 
-Обоснование архитектуры и артефакты ИИ: `README.md`
+Architectural reasoning and AI artifacts: `README.md`
 
-## Команды
+## Commands
 
 ```
-make demo     поднять стенд, создать демо-опрос, напечатать ссылки   ← начни с этого
+make demo     bring up the stand, create a demo poll, print the links   ← start here
 make test     unit + integration (testcontainers, Redis Cluster)
 make lint     golangci-lint v2
-make smoke    end-to-end проверка
-make chaos    сценарии отказов
+make smoke    end-to-end check
+make chaos    failure scenarios
 make load     k6
 ```
 
-## Границы слоёв
+## Layer boundaries
 
 ```
 domain  ◄──  service  ◄──  transport (httpapi)
 domain  ◄──  adapter (postgres, redis, producer)
-platform/app — единственное место, где всё это встречается
+platform/app — the only place where all of them meet
 ```
 
-`internal/domain` не импортирует **ничего** из проекта. Сервисы не видят `rueidis`,
-`pgx` и `net/http`; хендлеры не видят `rueidis`, `pgx` и `kgo`. Всё это запрещено
-`depguard` в `.golangci.yml` — это проверка, а не пожелание.
+`internal/domain` imports **nothing** from the project. Services never see `rueidis`,
+`pgx` or `net/http`; handlers never see `rueidis`, `pgx` or `kgo`. All of this is forbidden
+by `depguard` in `.golangci.yml` — that is a check, not a preference.
 
-Каждый бинарник собирает себя сам: `app.RunAPI`, `app.RunConsumer`, `app.RunSnapshot`
-открывают ровно свои соединения и закрывают их через `defer`. Общий только жизненный
-цикл (`lifecycle.go`): конфиг, телеметрия, `/livez /readyz /metrics`, сигналы, shutdown.
+Every binary wires itself: `app.RunAPI`, `app.RunConsumer` and `app.RunSnapshot` open
+exactly their own connections and release them with `defer`. Only the lifecycle is shared
+(`lifecycle.go`): config, telemetry, `/livez /readyz /metrics`, signals, shutdown.
 
-## Инварианты, которые ломаются молча
+## Invariants that break silently
 
-Каждый из них не даёт ни ошибки компиляции, ни падения теста, ни записи в логе.
-Прежде чем менять связанный код — перечитай.
+None of these produces a compile error, a failing test, or a log line.
+Re-read this before changing the related code.
 
-| Инвариант | Что будет, если нарушить |
+| Invariant | What happens if it is broken |
 |---|---|
-| `DEDUP_TTL ≥ окно дренажа × запас` | ключ создаётся консьюмером; два сообщения одного человека приходят в начале и конце дренажа |
-| **`localStorage`, никогда `sessionStorage`** | F5 в той же вкладке пройдёт, а закрытие вкладки даст новый голос — тест обязан эмулировать закрытие |
-| Lua идемпотентен по `voterID` | Kafka доставляет **at-least-once**: ребаланс переиграет сообщение, без идемпотентности каждый ребаланс завысит результат |
-| Окно проверяется по метке produce | а не по времени обработки: голос с 59-й секунды консьюмится на 300-й |
-| `maxmemory-policy noeviction` | Redis вытеснит дедуп-ключи → повторные голоса пойдут в счёт |
-| Интеграционные тесты Redis — на ноде с `cluster-enabled` | без него `CROSSSLOT` не проверяется сервером, и тест ничего не доказывает |
-| Дедуп-ключ и счётчик — общий hash tag | иначе `CROSSSLOT` и скрипт не выполнится |
-| `shard_count` берётся из строки опроса | из глобального конфига → смена значения в эфире откроет повторное голосование |
-| Ответ приёма — **`202 accepted`** | `200 counted` было бы враньём: голос ещё не посчитан |
-| Rate limit IPv6 — по префиксу /64 | у клиента вся /64, лимит по адресу бесполезен |
-| `X-Forwarded-For` — только от своего ingress | иначе обход лимита одной строкой в curl |
-| TTL дедупа с джиттером ±10 % | 30 млн ключей истекут разом и добьют Redis на хвосте |
-| Снапшотер пишет **абсолютные** значения через `GREATEST` | дельты + ретрай = завышенный результат |
-| Конфиг опроса — фоновый рефрешер, не ленивый TTL | истечение TTL при 2M RPS даёт thundering herd |
-| Postgres не на горячем пути | иначе его падение останавливает голосование |
-| Ручное закрытие двигает `closes_at`, а не статус | статус `closed` выбрасывает опрос из выборки снапшотера: голоса последних секунд не попадут в результат, а публикуемый результат не будет записан вовсе |
-| Никогда не отвечать успехом за голос, не принятый Redis | врать клиенту хуже, чем показать 503 |
+| `DEDUP_TTL >= drain window x margin` | the key is created by the consumer; two messages from one person arrive at the start and the end of the drain |
+| **`localStorage`, never `sessionStorage`** | F5 in the same tab is caught, but closing the tab yields a new vote — the test must emulate closing |
+| The Lua script is idempotent per `voterID` | Kafka delivers **at-least-once**: a rebalance replays the message, and without idempotency every rebalance inflates the result |
+| The window is checked against the produce timestamp | not the processing time: a vote from second 59 is consumed at second 300 |
+| `maxmemory-policy noeviction` | Redis evicts dedup keys, and repeat votes start counting |
+| Redis integration tests run on a node with `cluster-enabled` | without it the server never checks `CROSSSLOT`, and the test proves nothing |
+| The dedup key and the counter share a hash tag | otherwise `CROSSSLOT`, and the script does not execute |
+| `shard_count` is read from the poll row | not from global config: changing the value on air would reopen voting |
+| The ingest response is **`202 accepted`** | `200 counted` would be a lie: the vote has not been counted yet |
+| IPv6 rate limiting is per /64 prefix | the client owns the whole /64, so limiting per address is useless |
+| `X-Forwarded-For` is trusted only from our own ingress | otherwise the limit is bypassed with one line of curl |
+| Dedup TTL carries +/-10% jitter | 30M keys expiring at once would finish Redis off on the tail |
+| The snapshotter writes **absolute** values through `GREATEST` | deltas plus a retry give an inflated result |
+| Poll config uses a background refresher, not a lazy TTL | a TTL expiry at 2M RPS gives a thundering herd |
+| Postgres is not on the hot path | otherwise its failure stops the voting |
+| Closing by hand moves `closes_at`, not the status | status `closed` drops the poll out of the snapshotter's selection: the final seconds never land in the result, and the published result is not written at all |
+| Never answer success for a vote Redis did not accept | lying to the client is worse than showing a 503 |
 
-## Приватность
+## Privacy
 
-В схеме данных **нет** связи «голос ↔ человек», и её нельзя добавить.
-Дедуп-ключ хранит факт голосования, но не выбор.
+The data model contains **no** "vote ↔ person" link, and one cannot be added.
+The dedup key records the fact of voting, not the choice.
 
-- `voter_id` — из `crypto/rand`, не производный от IP или fingerprint
-- IP в логах и метриках — только хэшем с ротируемой солью
-- Отдельные голоса не хранятся нигде, включая аналитику
-- Детект аномалий агрегирует по /16-подсетям, а не по адресам
+- `voter_id` comes from `crypto/rand`, and is not derived from an IP or a fingerprint
+- IPs in logs and metrics appear only as a hash with a rotating salt
+- Individual votes are not stored anywhere, analytics included
+- Anomaly detection aggregates by /16 subnet, not by address
 
-## Конвенции
+## Conventions
 
-| Что | Правило |
+| Subject | Rule |
 |---|---|
-| Конструкторы | `New*(deps…) (*T, error)`, зависимости параметрами. Никаких глобалов и `init()` |
-| Ошибки | типизированные доменные; **единственная** точка маппинга — `internal/httpapi/errors.go` |
-| Контекст | `ctx` первым параметром, таймаут на каждом внешнем вызове |
-| Интерфейсы | объявляются на стороне потребителя, узкие |
-| Логи | `slog`, `trace_id` в каждой записи. На горячем пути — только сэмпл и ошибки |
-| Конфиг | одна структура с тегами `env`, валидация при старте, fail fast |
-| Комментарии | объясняют «почему», а не «что» |
+| Constructors | `New*(deps...) (*T, error)`, dependencies as parameters. No globals and no `init()` |
+| Errors | typed domain errors; the **single** mapping point is `internal/transport/httpapi/errors.go` |
+| Context | `ctx` first, a timeout on every external call |
+| Interfaces | declared on the consumer side, kept narrow |
+| Logs | `slog`, `trace_id` on every record. On the hot path, sampling and errors only |
+| Config | one struct with `env` tags, validated at startup, fail fast |
+| Comments | explain "why", not "what" |
 
-Единственная точка маппинга ошибок — не стилистика: она гарантирует, что
-`already_counted` вернёт 200 из любого хендлера, а не 409 из написанного последним.
+The single error-mapping point is not a style choice: it guarantees that `already_counted`
+returns 200 from every handler, rather than 409 from whichever one was written last.
 
-## Тесты
+## Tests
 
-Table-driven, рядом с кодом, имена читаются как утверждения:
+Table-driven, next to the code, with names that read as assertions:
 `TestVote_DuplicateTokenReturnsAlreadyCounted`.
 
-Интеграционные — на настоящих Redis (cluster-enabled) и Postgres через
-testcontainers, тег сборки `integration`. Lua-скрипт голосования выполняется
-там по-настоящему: дедуп, идемпотентность при параллельной доставке, TTL
-счётчика и отказ CROSSSLOT.
+Integration tests run against a real Redis (cluster-enabled) and Postgres through
+testcontainers, behind the `integration` build tag. The voting Lua script executes there for
+real: deduplication, idempotency under concurrent delivery, counter TTL, and CROSSSLOT rejection.
 
-Нагрузочный тест меряет **стоимость одного голоса**, а не абсолютный RPS,
-и проверяет, что сумма счётчиков равна числу успешных ответов.
+The load test measures the **cost of a single vote** rather than absolute RPS, and checks that
+the sum of the counters equals the number of successful responses.
 
-## Чего не делать
+## What not to do
 
-- Не добавлять хранение отдельных голосов — это ломает заявленную анонимность
-- Не выносить дедуп в память процесса — корректность требует Redis
-- Не использовать fingerprint ни как ключ дедупа, ни как сигнал: энтропии не хватает
-- Не отвечать `200` за голос, только положенный в Kafka
-- Не решардить Redis и не выкатывать релиз в окне эфира
-- Не логировать `voter_id`, сырой IP или содержимое токена
-- Не заменять `GREATEST` на присваивание в снапшотере
-- Не добавлять k8s-манифесты: стенд на docker-compose, прод описан в `README.md`
+- Do not add storage of individual votes — it breaks the anonymity the project claims
+- Do not move deduplication into process memory — correctness requires Redis
+- Do not use a fingerprint as a dedup key or as a signal: there is not enough entropy
+- Do not answer `200` for a vote that has only been placed into Kafka
+- Do not reshard Redis and do not ship a release inside the broadcast window
+- Do not log `voter_id`, a raw IP, or token contents
+- Do not replace `GREATEST` with assignment in the snapshotter
+- Do not add k8s manifests: the stand runs on docker-compose, production is described in `README.md`
