@@ -117,28 +117,6 @@ func TestRateLimit_ReturnsTooManyRequestsWithRetryAfter(t *testing.T) {
 	assert.NotEmpty(t, limited.Header().Get("Retry-After"), "клиенту нужно знать, когда повторить")
 }
 
-func TestBlockDatacenterASN_Returns403(t *testing.T) {
-	t.Parallel()
-
-	ranges := mustPrefixes(t, "198.51.100.0/24")
-	h := httpx.ClientIP(nil)(httpx.BlockDatacenterASN(ranges)(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }),
-	))
-
-	cases := map[string]int{
-		"198.51.100.9:1111": http.StatusForbidden, // датацентр
-		"203.0.113.42:1111": http.StatusAccepted,  // живой зритель
-	}
-
-	for remote, want := range cases {
-		r := httptest.NewRequest(http.MethodPost, "/", nil)
-		r.RemoteAddr = remote
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		assert.Equal(t, want, w.Code, "адрес %s", remote)
-	}
-}
-
 func TestNFR9_SecurityHeadersPresent(t *testing.T) {
 	t.Parallel()
 

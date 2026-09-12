@@ -29,16 +29,28 @@ func NewPollRepo(db *DB) (*PollRepo, error) {
 	return &PollRepo{db: db.pool}, nil
 }
 
-const pollColumns = `p.id, p.slug, p.question, p.type, p.min_choices, p.max_choices,
-	p.status, p.opens_at, p.closes_at, p.shard_count,
-	p.expected_audience, p.expected_conversion, p.salt,
-	p.version`
+const selectPolls = `
+	SELECT p.id, p.slug, p.question, p.type, p.min_choices, p.max_choices,
+	       p.status, p.opens_at, p.closes_at, p.shard_count,
+	       p.expected_audience, p.expected_conversion, p.salt, p.version,
+	       COALESCE(array_agg(o.idx  ORDER BY o.idx) FILTER (WHERE o.idx IS NOT NULL), '{}'),
+	       COALESCE(array_agg(o.text ORDER BY o.idx) FILTER (WHERE o.idx IS NOT NULL), '{}')
+	FROM polls p
+	LEFT JOIN poll_options o ON o.poll_id = p.id`
 
 const (
-	predPollBySlug = `p.slug = $1`
+	pollBySlug = selectPolls + `
+	WHERE p.slug = $1
+	GROUP BY p.id`
 
-	predPollActive = `p.status IN ('scheduled', 'open')`
-	predPollAny    = `TRUE`
+	activePolls = selectPolls + `
+	WHERE p.status IN ('scheduled', 'open')
+	GROUP BY p.id
+	ORDER BY p.opens_at, p.id`
+
+	allPolls = selectPolls + `
+	GROUP BY p.id
+	ORDER BY p.opens_at, p.id`
 )
 
 func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
@@ -106,15 +118,22 @@ func (r *PollRepo) Create(ctx context.Context, row *domain.Poll) error {
 }
 
 func (r *PollRepo) GetBySlug(ctx context.Context, slug string) (*domain.Poll, error) {
-	return r.one(ctx, predPollBySlug, slug)
+	polls, err := r.query(ctx, pollBySlug, slug)
+	if err != nil {
+		return nil, err
+	}
+	if len(polls) == 0 {
+		return nil, fmt.Errorf("postgres: poll %q: %w", slug, ErrNotFound)
+	}
+	return polls[0], nil
 }
 
 func (r *PollRepo) ListActive(ctx context.Context) ([]*domain.Poll, error) {
-	return r.many(ctx, predPollActive)
+	return r.query(ctx, activePolls)
 }
 
 func (r *PollRepo) List(ctx context.Context) ([]*domain.Poll, error) {
-	return r.many(ctx, predPollAny)
+	return r.query(ctx, allPolls)
 }
 
 func (r *PollRepo) CloseNow(ctx context.Context, id uuid.UUID, version uint32) error {
@@ -164,94 +183,45 @@ func versionedOutcome(id uuid.UUID, version uint32, applied, exists bool) error 
 	}
 }
 
-func (r *PollRepo) one(ctx context.Context, pred string, args ...any) (*domain.Poll, error) {
-	rows, err := r.many(ctx, pred, args...)
+func (r *PollRepo) query(ctx context.Context, sql string, args ...any) ([]*domain.Poll, error) {
+	rows, err := r.db.Query(ctx, sql, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("postgres: select polls: %w", err)
 	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("postgres: poll by predicate %q: %w", pred, ErrNotFound)
-	}
-	return rows[0], nil
-}
+	defer rows.Close()
 
-func (r *PollRepo) many(ctx context.Context, pred string, args ...any) ([]*domain.Poll, error) {
-	q := `SELECT ` + pollColumns + ` FROM polls p WHERE ` + pred + ` ORDER BY p.opens_at, p.id`
-
-	rows, err := r.db.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: select polls (%s): %w", pred, err)
-	}
-	byID := make(map[uuid.UUID]*domain.Poll)
-	out := make([]*domain.Poll, 0, 8)
+	var out []*domain.Poll
 	for rows.Next() {
-		row, err := scanPoll(rows)
+		poll, err := scanPoll(rows)
 		if err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("postgres: scan poll row: %w", err)
+			return nil, fmt.Errorf("postgres: scan poll: %w", err)
 		}
-		out = append(out, row)
-		byID[row.ID] = row
+		out = append(out, poll)
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("postgres: select polls (%s): %w", pred, err)
+		return nil, fmt.Errorf("postgres: select polls: %w", err)
 	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-
-	optQ := `SELECT o.poll_id, o.idx, o.text FROM poll_options o
-		WHERE o.poll_id IN (SELECT p.id FROM polls p WHERE ` + pred + `)
-		ORDER BY o.poll_id, o.idx`
-
-	optRows, err := r.db.Query(ctx, optQ, args...)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: select options (%s): %w", pred, err)
-	}
-	defer optRows.Close()
-	for optRows.Next() {
-		var (
-			pollID uuid.UUID
-			idx    int16
-			text   string
-		)
-		if err := optRows.Scan(&pollID, &idx, &text); err != nil {
-			return nil, fmt.Errorf("postgres: scan option: %w", err)
-		}
-		row, ok := byID[pollID]
-		if !ok {
-			continue
-		}
-		if idx < 0 || idx > domain.MaxOptions {
-			return nil, fmt.Errorf("postgres: option %d of poll %s is out of range 0..%d",
-				idx, pollID, domain.MaxOptions)
-		}
-		row.Options = append(row.Options, domain.Option{Idx: uint8(idx), Text: text})
-	}
-	if err := optRows.Err(); err != nil {
-		return nil, fmt.Errorf("postgres: select options (%s): %w", pred, err)
-	}
-
 	return out, nil
 }
 
 func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	var (
-		row        domain.Poll
-		pollType   string
-		status     string
-		minChoices int16
-		maxChoices int16
-		shardCount int32
-		version    int64
+		row         domain.Poll
+		pollType    string
+		status      string
+		minChoices  int16
+		maxChoices  int16
+		shardCount  int32
+		version     int64
+		optionIdx   []int16
+		optionTexts []string
 	)
 
 	if err := rows.Scan(
 		&row.ID, &row.Slug, &row.Question, &pollType, &minChoices, &maxChoices,
 		&status, &row.OpensAt, &row.ClosesAt, &shardCount,
-		&row.ExpectedAudience, &row.ExpectedConversion, &row.Salt,
-		&version,
+		&row.ExpectedAudience, &row.ExpectedConversion, &row.Salt, &version,
+		&optionIdx, &optionTexts,
 	); err != nil {
 		return nil, err
 	}
@@ -278,6 +248,14 @@ func scanPoll(rows pgx.Rows) (*domain.Poll, error) {
 	row.MaxChoices = uint8(maxChoices)
 	row.ShardCount = uint16(shardCount)
 	row.Version = uint32(version)
+
+	row.Options = make([]domain.Option, 0, len(optionIdx))
+	for i, idx := range optionIdx {
+		if idx < 0 || idx > domain.MaxOptions {
+			return nil, fmt.Errorf("poll %s: option %d is out of range 0..%d", row.ID, idx, domain.MaxOptions)
+		}
+		row.Options = append(row.Options, domain.Option{Idx: uint8(idx), Text: optionTexts[i]})
+	}
 	return &row, nil
 }
 

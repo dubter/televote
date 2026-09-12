@@ -68,25 +68,6 @@ func NewAdminHandler(
 		tokens: tokens, limiter: limiter, now: now, minLeadTime: minLeadTime}, nil
 }
 
-func (h *AdminHandler) Routes() chi.Router {
-	r := chi.NewRouter()
-	r.Post("/login", h.login)
-
-	r.Group(func(protected chi.Router) {
-		protected.Use(h.requireRole(auth.RoleViewer))
-		protected.Get("/polls", h.listPolls)
-		protected.Get("/polls/{slug}/results", h.pollResults)
-	})
-
-	r.Group(func(editor chi.Router) {
-		editor.Use(h.requireRole(auth.RoleEditor))
-		editor.Post("/polls", h.createPoll)
-		editor.Post("/polls/{slug}/open", h.openPoll)
-		editor.Post("/polls/{slug}/close", h.closePoll)
-	})
-	return r
-}
-
 type claimsKeyType int
 
 const claimsKey claimsKeyType = 0

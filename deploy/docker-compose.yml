@@ -11,7 +11,6 @@ x-app-env: &app-env
   POSTGRES_DSN: postgres://televote:televote@postgres:5432/televote?sslmode=disable
   POSTGRES_READ_DSN: postgres://televote:televote@postgres:5432/televote?sslmode=disable
   PUBLIC_BASE_URL: http://localhost:${APP_PORT:-8080}
-  ASN_BLOCK_ENABLED: "false"
   RATE_LIMIT_PER_MIN: "10000000"
   SNAPSHOT_INTERVAL: 2s
   SNAPSHOT_FINAL_GRACE: 5s

@@ -92,8 +92,6 @@ type Config struct {
 	RateLimitMaxKeys int            `env:"RATE_LIMIT_MAX_KEYS" envDefault:"200000"`
 	TrustedProxies   []netip.Prefix `env:"TRUSTED_PROXIES" envSeparator:","`
 
-	ASNBlocklistPath  string  `env:"ASN_BLOCKLIST_PATH" envDefault:"/etc/televote/datacenter-ranges.txt"`
-	ASNBlockEnabled   bool    `env:"ASN_BLOCK_ENABLED" envDefault:"true"`
 	AnomalySampleRate float64 `env:"ANOMALY_SAMPLE_RATE" envDefault:"0.01"`
 
 	AdminJWTKey            string        `env:"ADMIN_JWT_KEY"`
@@ -299,9 +297,6 @@ func (c *Config) validate() error {
 		fail("RATE_LIMIT_MAX_KEYS", "must be positive: the limiter table has to stay bounded")
 	}
 
-	if c.ASNBlockEnabled && c.ASNBlocklistPath == "" {
-		fail("ASN_BLOCKLIST_PATH", "is required when ASN_BLOCK_ENABLED=true")
-	}
 	if c.AnomalySampleRate < 0 || c.AnomalySampleRate > 1 {
 		fail("ANOMALY_SAMPLE_RATE", "expected a ratio in [0,1], got %v", c.AnomalySampleRate)
 	}

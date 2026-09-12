@@ -13,7 +13,7 @@ type CapacityAdvisor interface {
 	Advise(ctx context.Context) (capacity.Advice, error)
 }
 
-func CapacityHandler(advisor CapacityAdvisor) http.HandlerFunc {
+func capacityHandler(advisor CapacityAdvisor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		advice, err := advisor.Advise(r.Context())
 		if err != nil {

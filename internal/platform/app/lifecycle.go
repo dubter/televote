@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/pprof" //nolint:gosec // G108: pprof runs on its own mux and listener, DefaultServeMux is not exposed
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -16,12 +15,12 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/dubter/televote/internal/platform/config"
 	"github.com/dubter/televote/internal/platform/health"
 	"github.com/dubter/televote/internal/platform/metrics"
 	"github.com/dubter/televote/internal/platform/observability"
+	"github.com/dubter/televote/internal/transport/httpapi"
 )
 
 const (
@@ -86,28 +85,14 @@ func (rt *runtime) flush(ctx context.Context) {
 	}
 }
 
-func (rt *runtime) newMux(readiness ...health.Checker) *http.ServeMux {
-	handler := health.Handler(nil, append(readiness, rt.gate.Checker()))
-
-	mux := http.NewServeMux()
-	mux.Handle("/livez", handler)
-	mux.Handle("/readyz", handler)
-	mux.Handle("/metrics", promhttp.Handler())
-	return mux
+func (rt *runtime) probes(readiness ...health.Checker) *health.Probes {
+	return health.New(nil, append(readiness, rt.gate.Checker()))
 }
 
-func (rt *runtime) logged(name string, run func(context.Context) error) worker {
-	return func(ctx context.Context) {
-		if err := run(ctx); err != nil {
-			rt.log.ErrorContext(ctx, name+" stopped", slog.Any("error", err))
-		}
-	}
-}
-
-func (rt *runtime) serve(ctx context.Context, mux *http.ServeMux, workers ...worker) error {
+func (rt *runtime) serve(ctx context.Context, handler http.Handler, workers ...worker) error {
 	cfg, logger := rt.cfg, rt.log
 
-	srv := newServer(ctx, cfg, logger, cfg.HTTPAddr, mux)
+	srv := newServer(ctx, cfg, logger, cfg.HTTPAddr, handler)
 
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -117,7 +102,7 @@ func (rt *runtime) serve(ctx context.Context, mux *http.ServeMux, workers ...wor
 
 	var debugSrv *http.Server
 	if cfg.DebugEnabled() {
-		debugSrv = newServer(ctx, cfg, logger, cfg.DebugAddr, debugMux())
+		debugSrv = newServer(ctx, cfg, logger, cfg.DebugAddr, httpapi.DebugRouter())
 		logger.Info("pprof started", slog.String("addr", cfg.DebugAddr))
 		go func() {
 			if err := listen(debugSrv); err != nil {
@@ -202,16 +187,6 @@ func listen(srv *http.Server) error {
 		return fmt.Errorf("listener %s: %w", srv.Addr, err)
 	}
 	return nil
-}
-
-func debugMux() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	return mux
 }
 
 func stdoutHandler(cfg *config.Config) slog.Handler {

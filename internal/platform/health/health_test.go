@@ -16,11 +16,18 @@ import (
 	"github.com/dubter/televote/internal/platform/health"
 )
 
-func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+func route(h *health.Probes) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/livez", h.Live)
+	mux.HandleFunc("/readyz", h.Ready)
+	return mux
+}
+
+func get(t *testing.T, h *health.Probes, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	route(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec
 }
 
@@ -33,7 +40,7 @@ func failingChecker(msg string) health.Checker {
 func TestLivez_AlwaysOKWithoutCheckers(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, []health.Checker{failingChecker("redis down")})
+	h := health.New(nil, []health.Checker{failingChecker("redis down")})
 
 	rec := get(t, h, "/livez")
 
@@ -44,7 +51,7 @@ func TestLivez_AlwaysOKWithoutCheckers(t *testing.T) {
 func TestLivez_FailsWhenLivenessCheckerFails(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler([]health.Checker{failingChecker("deadlocked")}, nil)
+	h := health.New([]health.Checker{failingChecker("deadlocked")}, nil)
 
 	rec := get(t, h, "/livez")
 
@@ -55,7 +62,7 @@ func TestLivez_FailsWhenLivenessCheckerFails(t *testing.T) {
 func TestReadyz_OKWhenEveryCheckerPasses(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, []health.Checker{okChecker, okChecker})
+	h := health.New(nil, []health.Checker{okChecker, okChecker})
 
 	rec := get(t, h, "/readyz")
 
@@ -71,7 +78,7 @@ func TestReadyz_OKWhenEveryCheckerPasses(t *testing.T) {
 func TestReadyz_FailsWhenCheckerFails(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, []health.Checker{okChecker, failingChecker("postgres unreachable")})
+	h := health.New(nil, []health.Checker{okChecker, failingChecker("postgres unreachable")})
 
 	rec := get(t, h, "/readyz")
 
@@ -82,7 +89,7 @@ func TestReadyz_FailsWhenCheckerFails(t *testing.T) {
 func TestReadyz_ReportsEveryFailingChecker(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, []health.Checker{
+	h := health.New(nil, []health.Checker{
 		failingChecker("redis unreachable"),
 		okChecker,
 		failingChecker("postgres unreachable"),
@@ -114,7 +121,7 @@ func TestReadyz_RunsCheckersConcurrently(t *testing.T) {
 		checkers[i] = slow
 	}
 
-	h := health.Handler(nil, checkers)
+	h := health.New(nil, checkers)
 
 	start := time.Now()
 	rec := get(t, h, "/readyz")
@@ -139,14 +146,14 @@ func TestReadyz_TimesOutSlowChecker(t *testing.T) {
 		}
 	}
 
-	h := health.Handler(nil, []health.Checker{hang})
+	h := health.New(nil, []health.Checker{hang})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil).WithContext(ctx))
+	route(h).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil).WithContext(ctx))
 
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Less(t, time.Since(start), time.Second, "зависший чекер обязан прерваться по таймауту")
@@ -162,7 +169,7 @@ func TestReadyz_PassesRequestContextToCheckers(t *testing.T) {
 		return nil
 	}
 
-	h := health.Handler(nil, []health.Checker{probe})
+	h := health.New(nil, []health.Checker{probe})
 
 	rec := get(t, h, "/readyz")
 
@@ -173,7 +180,7 @@ func TestReadyz_PassesRequestContextToCheckers(t *testing.T) {
 func TestHandler_ResponsesAreNotCacheable(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, nil)
+	h := health.New(nil, nil)
 
 	for _, path := range []string{"/livez", "/readyz"} {
 		rec := get(t, h, path)
@@ -184,23 +191,13 @@ func TestHandler_ResponsesAreNotCacheable(t *testing.T) {
 	}
 }
 
-func TestHandler_UnknownPathIsNotFound(t *testing.T) {
-	t.Parallel()
-
-	h := health.Handler(nil, nil)
-
-	rec := get(t, h, "/healthz")
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
 func TestHandler_RejectsWriteMethods(t *testing.T) {
 	t.Parallel()
 
-	h := health.Handler(nil, nil)
+	h := health.New(nil, nil)
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/readyz", nil))
+	route(h).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/readyz", nil))
 
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 	assert.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
@@ -210,7 +207,7 @@ func TestReadyz_GateFlipsToUnavailable(t *testing.T) {
 	t.Parallel()
 
 	gate := health.NewGate()
-	h := health.Handler(nil, []health.Checker{gate.Checker()})
+	h := health.New(nil, []health.Checker{gate.Checker()})
 
 	assert.Equal(t, http.StatusServiceUnavailable, get(t, h, "/readyz").Code,
 		"пока Warm не прошёл, инстанс не готов")
@@ -228,7 +225,7 @@ func TestGate_IsRaceFree(t *testing.T) {
 	t.Parallel()
 
 	gate := health.NewGate()
-	h := health.Handler(nil, []health.Checker{gate.Checker()})
+	h := health.New(nil, []health.Checker{gate.Checker()})
 
 	done := make(chan struct{})
 	go func() {

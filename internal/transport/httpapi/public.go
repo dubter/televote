@@ -63,14 +63,6 @@ func NewPublicHandler(
 	return &PublicHandler{cache: cache, sink: sink, obs: obs, now: now, maxBody: maxBody}, nil
 }
 
-func (h *PublicHandler) Routes() chi.Router {
-	r := chi.NewRouter()
-	r.Get("/time", h.serverTime)
-	r.Get("/polls/{slug}", h.pollConfig)
-	r.Post("/polls/{slug}/vote", h.castVote)
-	return r
-}
-
 type serverTimeResponse struct {
 	ServerTime string `json:"server_time"`
 }

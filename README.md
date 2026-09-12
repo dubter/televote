@@ -10,8 +10,8 @@ make demo
 ```
 
 ```
-Voting        http://localhost:8080/p/demo
-QR code       http://localhost:8080/p/demo/qr.png
+Voting        http://localhost:8080/p/demo-193540
+QR code       http://localhost:8080/p/demo-193540/qr.png
 Admin         http://localhost:8080/admin      admin / dev-only-change-me
 Grafana       http://localhost:3000/d/televote
 ```
@@ -196,8 +196,8 @@ hashing with the poll salt.
 Results carry `final: false` while counting is still running. Percentages are computed against
 the number of ballots: with multiple choice, the sum of votes exceeds the number of voters.
 
-Status codes: `202` accepted · `400` invalid choice or `voter` · `401`/`403` missing token or a
-datacenter address · `404`/`409` no such poll or a vote outside the window · `429`/`503` rate
+Status codes: `202` accepted · `400` invalid choice or `voter` · `401`/`403` missing or
+insufficient token · `404`/`409` no such poll or a vote outside the window · `429`/`503` rate
 limit or Kafka unavailable.
 
 ## Deduplication
@@ -207,7 +207,6 @@ limit or Kafka unavailable.
 | `localStorage` plus a poll-salted hash | F5, closing the tab, double click | incognito, another browser |
 | `SET NX` inside Lua | a repeat under the same identifier | a new identifier |
 | Rate limit per /64 prefix | a naive script | a proxy |
-| Datacenter ASN filter | a script on a VPS | residential proxies |
 
 The spec asks for protection "at the level of ordinary, non-technical users". These layers stop
 a person hitting F5, but not a twenty-line script — that is compliance with the requirement, not

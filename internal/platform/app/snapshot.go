@@ -81,8 +81,7 @@ func RunSnapshot(ctx context.Context) error {
 		return fmt.Errorf("capacity advisor: %w", err)
 	}
 
-	mux := rt.newMux(pgRead.Ping, store.Ping, kafka.Ping)
-	mux.Handle("/internal/capacity", httpapi.CapacityHandler(advisor))
+	router := httpapi.SnapshotRouter(rt.probes(pgRead.Ping, store.Ping, kafka.Ping), advisor)
 
-	return rt.serve(ctx, mux, snapshotter.Run)
+	return rt.serve(ctx, router, snapshotter.Run)
 }
