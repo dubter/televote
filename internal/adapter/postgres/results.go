@@ -18,11 +18,11 @@ type ResultRepo struct {
 	db *pgxpool.Pool
 }
 
-func NewResultRepo(db *pgxpool.Pool) (*ResultRepo, error) {
+func NewResultRepo(db *DB) (*ResultRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: ResultRepo without a connection pool")
 	}
-	return &ResultRepo{db: db}, nil
+	return &ResultRepo{db: db.pool}, nil
 }
 
 func voteArrays(pollID uuid.UUID, a domain.Aggregate) (idx []int16, votes []int64, err error) {

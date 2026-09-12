@@ -1,6 +1,6 @@
 //go:build integration
 
-package vote_test
+package redis
 
 import (
 	"context"
@@ -17,12 +17,12 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/dubter/televote/internal/service/vote"
+	"github.com/dubter/televote/internal/domain"
 )
 
 const shardCount = 64
 
-func startRedis(ctx context.Context, t *testing.T) rueidis.Client {
+func startRedis(ctx context.Context, t *testing.T) *Client {
 	t.Helper()
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -46,71 +46,75 @@ func startRedis(ctx context.Context, t *testing.T) rueidis.Client {
 	endpoint, err := container.PortEndpoint(ctx, "6379/tcp", "")
 	require.NoError(t, err)
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	raw, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{endpoint}, DisableCache: true, ForceSingleClient: true,
 	})
 	require.NoError(t, err)
-	t.Cleanup(client.Close)
+	t.Cleanup(raw.Close)
 
 	slots := make([]string, 0, 16384)
 	for slot := range 16384 {
 		slots = append(slots, fmt.Sprint(slot))
 	}
-	require.NoError(t, client.Do(ctx,
-		client.B().Arbitrary(append([]string{"CLUSTER", "ADDSLOTS"}, slots...)...).Build()).Error())
+	require.NoError(t, raw.Do(ctx,
+		raw.B().Arbitrary(append([]string{"CLUSTER", "ADDSLOTS"}, slots...)...).Build()).Error())
 
 	require.Eventually(t, func() bool {
-		info, infoErr := client.Do(ctx, client.B().Arbitrary("CLUSTER", "INFO").Build()).ToString()
+		info, infoErr := raw.Do(ctx, raw.B().Arbitrary("CLUSTER", "INFO").Build()).ToString()
 		return infoErr == nil && strings.Contains(info, "cluster_state:ok")
 	}, time.Minute, 200*time.Millisecond, "cluster mode did not come up")
 
-	return client
+	return &Client{raw: raw}
 }
 
-func newCaster(t *testing.T, client rueidis.Client) *vote.Caster {
+func newTally(t *testing.T, client *Client) *Tally {
 	t.Helper()
 
-	c, err := vote.NewCaster(client, time.Hour, 0, 5*time.Second)
+	tally, err := NewTally(client, time.Hour, 0, 5*time.Second)
 	require.NoError(t, err)
-	return c
+	return tally
 }
 
-func voter(t *testing.T, salt []byte, id string) vote.VoterID {
+func newTarget() domain.Sharding {
+	return domain.Sharding{PollID: uuid.New(), ShardCount: shardCount}
+}
+
+func voter(t *testing.T, id string) domain.VoterID {
 	t.Helper()
 
-	v, err := vote.DeriveVoterID(salt, id)
+	v, err := domain.DeriveVoterID([]byte(strings.Repeat("s", 32)), id)
 	require.NoError(t, err)
 	return v
 }
 
-func TestCast_SecondVoteOfSameVoterIsNotCounted(t *testing.T) {
+func TestApply_SecondVoteOfSameVoterIsNotCounted(t *testing.T) {
 	ctx := context.Background()
-	caster := newCaster(t, startRedis(ctx, t))
+	tally := newTally(t, startRedis(ctx, t))
 
-	poll, salt := uuid.New(), []byte(strings.Repeat("s", 32))
-	v := voter(t, salt, "viewer-1")
+	target := newTarget()
+	v := voter(t, "viewer-1")
 
-	first, err := caster.Cast(ctx, poll, shardCount, v, []uint8{1})
+	first, err := tally.Apply(ctx, target, v, []uint8{1})
 	require.NoError(t, err)
-	assert.Equal(t, vote.ResultCounted, first)
+	assert.Equal(t, domain.VoteCounted, first)
 
-	second, err := caster.Cast(ctx, poll, shardCount, v, []uint8{2})
+	second, err := tally.Apply(ctx, target, v, []uint8{2})
 	require.NoError(t, err)
-	assert.Equal(t, vote.ResultAlreadyCounted, second, "дедуп обязан отсечь повтор")
+	assert.Equal(t, domain.VoteAlreadyCounted, second, "дедуп обязан отсечь повтор")
 
-	agg, err := caster.Aggregate(ctx, poll, shardCount)
+	agg, err := tally.Aggregate(ctx, target)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, agg.Ballots)
 	assert.EqualValues(t, 1, agg.Votes[1])
 	assert.EqualValues(t, 0, agg.Votes[2], "второй выбор не должен попасть в счёт")
 }
 
-func TestCast_IsIdempotentUnderConcurrentRedelivery(t *testing.T) {
+func TestApply_IsIdempotentUnderConcurrentRedelivery(t *testing.T) {
 	ctx := context.Background()
-	caster := newCaster(t, startRedis(ctx, t))
+	tally := newTally(t, startRedis(ctx, t))
 
-	poll, salt := uuid.New(), []byte(strings.Repeat("s", 32))
-	v := voter(t, salt, "viewer-1")
+	target := newTarget()
+	v := voter(t, "viewer-1")
 
 	const parallel = 32
 	var (
@@ -122,8 +126,8 @@ func TestCast_IsIdempotentUnderConcurrentRedelivery(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, err := caster.Cast(ctx, poll, shardCount, v, []uint8{0})
-			if err == nil && res == vote.ResultCounted {
+			res, err := tally.Apply(ctx, target, v, []uint8{0})
+			if err == nil && res == domain.VoteCounted {
 				mu.Lock()
 				counted++
 				mu.Unlock()
@@ -134,60 +138,59 @@ func TestCast_IsIdempotentUnderConcurrentRedelivery(t *testing.T) {
 
 	assert.Equal(t, 1, counted, "ровно одна из параллельных доставок обязана быть засчитана")
 
-	agg, err := caster.Aggregate(ctx, poll, shardCount)
+	agg, err := tally.Aggregate(ctx, target)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, agg.Ballots)
 }
 
-func TestCast_MultipleChoiceCountsEveryOptionAndOneBallot(t *testing.T) {
+func TestApply_MultipleChoiceCountsEveryOptionAndOneBallot(t *testing.T) {
 	ctx := context.Background()
-	caster := newCaster(t, startRedis(ctx, t))
+	tally := newTally(t, startRedis(ctx, t))
 
-	poll, salt := uuid.New(), []byte(strings.Repeat("s", 32))
-	v := voter(t, salt, "viewer-1")
+	target := newTarget()
 
-	_, err := caster.Cast(ctx, poll, shardCount, v, []uint8{0, 3})
+	_, err := tally.Apply(ctx, target, voter(t, "viewer-1"), []uint8{0, 3})
 	require.NoError(t, err)
 
-	agg, err := caster.Aggregate(ctx, poll, shardCount)
+	agg, err := tally.Aggregate(ctx, target)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, agg.Ballots, "бюллетень один, даже если выборов несколько")
 	assert.EqualValues(t, 1, agg.Votes[0])
 	assert.EqualValues(t, 1, agg.Votes[3])
 }
 
-func TestCast_KeysOfOneVoterShareSlotAcrossRealCluster(t *testing.T) {
+func TestApply_KeysOfOneVoterShareSlotAcrossRealCluster(t *testing.T) {
 	ctx := context.Background()
-	caster := newCaster(t, startRedis(ctx, t))
+	tally := newTally(t, startRedis(ctx, t))
 
-	poll, salt := uuid.New(), []byte(strings.Repeat("s", 32))
+	target := newTarget()
 
 	for i := range 200 {
-		v := voter(t, salt, fmt.Sprintf("viewer-%d", i))
-		_, err := caster.Cast(ctx, poll, shardCount, v, []uint8{uint8(i % 4)})
+		v := voter(t, fmt.Sprintf("viewer-%d", i))
+		_, err := tally.Apply(ctx, target, v, []uint8{uint8(i % 4)})
 		require.NoErrorf(t, err, "голос %d: CROSSSLOT означает, что hash tag разъехался", i)
 	}
 
-	agg, err := caster.Aggregate(ctx, poll, shardCount)
+	agg, err := tally.Aggregate(ctx, target)
 	require.NoError(t, err)
 	assert.EqualValues(t, 200, agg.Ballots)
 }
 
-func TestCast_CounterExpiresSoRedisDoesNotGrowForever(t *testing.T) {
+func TestApply_CounterExpiresSoRedisDoesNotGrowForever(t *testing.T) {
 	ctx := context.Background()
 	client := startRedis(ctx, t)
 
-	caster, err := vote.NewCaster(client, 5*time.Second, 0, 5*time.Second)
+	tally, err := NewTally(client, 5*time.Second, 0, 5*time.Second)
 	require.NoError(t, err)
 
-	poll, salt := uuid.New(), []byte(strings.Repeat("s", 32))
-	v := voter(t, salt, "viewer-1")
+	target := newTarget()
+	v := voter(t, "viewer-1")
 
-	_, err = caster.Cast(ctx, poll, shardCount, v, []uint8{0})
+	_, err = tally.Apply(ctx, target, v, []uint8{0})
 	require.NoError(t, err)
 
-	shard := vote.ShardFor(v, shardCount)
-	ttl := client.Do(ctx, client.B().Ttl().Key(vote.CounterKey(poll, shard)).Build())
+	key := counterKey(target.PollID, shardFor(v, shardCount))
+	ttl := client.raw.Do(ctx, client.raw.B().Ttl().Key(key).Build())
 	require.NoError(t, ttl.Error())
 
 	seconds, err := ttl.AsInt64()
@@ -199,9 +202,16 @@ func TestCluster_RejectsCrossSlotScript(t *testing.T) {
 	ctx := context.Background()
 	client := startRedis(ctx, t)
 
-	err := client.Do(ctx, client.B().Eval().
+	err := client.raw.Do(ctx, client.raw.B().Eval().
 		Script("return 1").Numkeys(2).Key("{a}:dedup", "{b}:counter").Build()).Error()
 
 	require.Error(t, err, "стенд обязан проверять CROSSSLOT, иначе тесты ключей ничего не доказывают")
 	assert.Contains(t, err.Error(), "CROSSSLOT")
+}
+
+func TestOpen_PingsTheClusterThroughThePublicClient(t *testing.T) {
+	ctx := context.Background()
+	client := startRedis(ctx, t)
+
+	require.NoError(t, client.Ping(ctx))
 }

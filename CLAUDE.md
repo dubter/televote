@@ -20,11 +20,18 @@ make load     k6
 ## Границы слоёв
 
 ```
-domain  ◄──  application  ◄──  adapters (httpapi, storage, vote, snapshot)
+domain  ◄──  service  ◄──  transport (httpapi)
+domain  ◄──  adapter (postgres, redis, producer)
+platform/app — единственное место, где всё это встречается
 ```
 
-`internal/domain` не импортирует **ничего** из проекта. Обратные импорты запрещены
+`internal/domain` не импортирует **ничего** из проекта. Сервисы не видят `rueidis`,
+`pgx` и `net/http`; хендлеры не видят `rueidis`, `pgx` и `kgo`. Всё это запрещено
 `depguard` в `.golangci.yml` — это проверка, а не пожелание.
+
+Каждый бинарник собирает себя сам: `app.RunAPI`, `app.RunConsumer`, `app.RunSnapshot`
+открывают ровно свои соединения и закрывают их через `defer`. Общий только жизненный
+цикл (`lifecycle.go`): конфиг, телеметрия, `/livez /readyz /metrics`, сигналы, shutdown.
 
 ## Инварианты, которые ломаются молча
 

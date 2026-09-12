@@ -46,7 +46,7 @@ func Setup(ctx context.Context, cfg Config, stdout slog.Handler) (*Telemetry, er
 		return nil, fmt.Errorf("telemetry: service resource: %w", err)
 	}
 
-	traces, err := otlptracegrpc.New(ctx)
+	traces, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpointURL(cfg.Endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: trace exporter: %w", err)
 	}
@@ -60,7 +60,7 @@ func Setup(ctx context.Context, cfg Config, stdout slog.Handler) (*Telemetry, er
 		propagation.TraceContext{}, propagation.Baggage{},
 	))
 
-	logs, err := otlploggrpc.New(ctx)
+	logs, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpointURL(cfg.Endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: log exporter: %w", err)
 	}

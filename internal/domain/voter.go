@@ -1,10 +1,9 @@
-package vote
+package domain
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -24,11 +23,6 @@ func ParseVoterID(s string) (VoterID, error) {
 	}
 	return v, nil
 }
-
-var (
-	ErrBadClientID = errors.New("bad_client_id")
-	ErrBadSalt     = errors.New("bad_poll_salt")
-)
 
 const (
 	minSaltLen     = 16

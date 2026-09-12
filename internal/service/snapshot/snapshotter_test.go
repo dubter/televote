@@ -85,7 +85,7 @@ func TestTickOnce_WritesAggregateToPostgres(t *testing.T) {
 	p := openPoll()
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 		Return(domain.NewAggregateFrom(map[uint8]int64{0: 120, 1: 45}, 165), nil)
 
 	res, store := resultStore(t, ctrl)
@@ -105,7 +105,7 @@ func TestTickOnce_IsIdempotent(t *testing.T) {
 	p := openPoll()
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 		Return(domain.NewAggregateFrom(map[uint8]int64{0: 100}, 100), nil).
 		Times(5)
 
@@ -130,9 +130,9 @@ func TestNFR3_SnapshotIsMonotonic(t *testing.T) {
 
 	agg := mocks.NewMockAggregator(ctrl)
 	gomock.InOrder(
-		agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 			Return(domain.NewAggregateFrom(map[uint8]int64{0: 1000, 1: 500}, 1500), nil),
-		agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+		agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 			Return(domain.NewAggregateFrom(map[uint8]int64{0: 900, 1: 600}, 1490), nil),
 	)
 
@@ -191,7 +191,7 @@ func TestFinalize_WaitsForZeroLag(t *testing.T) {
 	afterGrace := closesAt.Add(time.Minute)
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 		Return(domain.NewAggregateFrom(map[uint8]int64{0: 10}, 10), nil).
 		AnyTimes()
 
@@ -221,7 +221,7 @@ func TestFinalize_WaitsForGracePeriod(t *testing.T) {
 	p := openPoll()
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).Return(domain.NewAggregate(), nil)
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).Return(domain.NewAggregate(), nil)
 
 	polls := mocks.NewMockPolls(ctrl)
 	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
@@ -243,7 +243,7 @@ func TestTickOnce_PropagatesRedisFailure(t *testing.T) {
 	p := openPoll()
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 		Return(domain.Aggregate{}, errors.New("redis недоступен"))
 
 	res, _ := resultStore(t, ctrl)
@@ -260,7 +260,7 @@ func TestTick_ReportsLagAndBallotsToObserver(t *testing.T) {
 	p := openPoll()
 
 	agg := mocks.NewMockAggregator(ctrl)
-	agg.EXPECT().Aggregate(gomock.Any(), p.ID, p.ShardCount).
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
 		Return(domain.NewAggregateFrom(map[uint8]int64{0: 7}, 7), nil)
 
 	polls := mocks.NewMockPolls(ctrl)

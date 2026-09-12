@@ -19,11 +19,10 @@ import (
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/pollcfg"
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 type Applier interface {
-	Cast(ctx context.Context, pollID uuid.UUID, shardCount uint16, v vote.VoterID, choices []uint8) (vote.Result, error)
+	Apply(ctx context.Context, target domain.Sharding, v domain.VoterID, choices []uint8) (domain.VoteResult, error)
 }
 
 type ConfigLookup interface {
@@ -54,7 +53,7 @@ type Counting struct {
 
 	retryBudget  time.Duration
 	lookupBudget time.Duration
-	breaker      *gobreaker.CircuitBreaker[vote.Result]
+	breaker      *gobreaker.CircuitBreaker[domain.VoteResult]
 	workers      int
 	tracer       trace.Tracer
 }
@@ -133,8 +132,8 @@ const (
 	breakerMinRequests   = 20
 )
 
-func newBreaker(cfg Config, log *slog.Logger, obs Observer) *gobreaker.CircuitBreaker[vote.Result] {
-	return gobreaker.NewCircuitBreaker[vote.Result](gobreaker.Settings{
+func newBreaker(cfg Config, log *slog.Logger, obs Observer) *gobreaker.CircuitBreaker[domain.VoteResult] {
+	return gobreaker.NewCircuitBreaker[domain.VoteResult](gobreaker.Settings{
 		Name:     "redis-apply",
 		Interval: cfg.BreakerWindow,
 		Timeout:  cfg.BreakerWindow,
@@ -234,7 +233,7 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 		return
 	}
 
-	voterID, err := vote.ParseVoterID(msg.VoterID)
+	voterID, err := domain.ParseVoterID(msg.VoterID)
 	if err != nil {
 		c.reject(ctx, reasonBadVoterID, err, at...)
 		return
@@ -255,8 +254,8 @@ func (c *Counting) applyRecord(ctx context.Context, rec *kgo.Record) {
 	}
 }
 
-func (c *Counting) retryable(err error) bool {
-	return vote.IsRetryable(err) ||
+func retryable(err error) bool {
+	return errors.Is(err, domain.ErrStoreUnavailable) ||
 		errors.Is(err, gobreaker.ErrOpenState) ||
 		errors.Is(err, gobreaker.ErrTooManyRequests)
 }
@@ -290,21 +289,21 @@ func (c *Counting) awaitConfig(ctx context.Context, pollID uuid.UUID) (*pollcfg.
 func (c *Counting) applyWithRetry(
 	ctx context.Context,
 	cfg *pollcfg.HotConfig,
-	voterID vote.VoterID,
+	voterID domain.VoterID,
 	choices []uint8,
-) (vote.Result, error) {
+) (domain.VoteResult, error) {
 	deadline := time.Now().Add(c.retryBudget)
 	backoff := initialApplyBackoff
 	warned := false
 
 	for {
-		res, err := c.breaker.Execute(func() (vote.Result, error) {
-			return c.applier.Cast(ctx, cfg.ID, cfg.ShardCount, voterID, choices)
+		res, err := c.breaker.Execute(func() (domain.VoteResult, error) {
+			return c.applier.Apply(ctx, cfg.Sharding(), voterID, choices)
 		})
 		if err == nil {
 			return res, nil
 		}
-		if !c.retryable(err) {
+		if !retryable(err) {
 			return 0, fmt.Errorf("consumer: apply vote of poll %s: %w", cfg.ID, err)
 		}
 		if !warned && time.Now().After(deadline) {

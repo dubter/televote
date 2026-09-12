@@ -215,10 +215,13 @@ func TestLoad_RejectsInvalidValues(t *testing.T) {
 		{name: "доля сэмплирования аномалий больше единицы", overrides: map[string]string{"ANOMALY_SAMPLE_RATE": "2"}, wantErr: "ANOMALY_SAMPLE_RATE"},
 		{name: "порог брейкера вне (0,1]", overrides: map[string]string{"BREAKER_ERROR_RATIO": "0"}, wantErr: "BREAKER_ERROR_RATIO"},
 		{name: "нулевой пул Postgres", overrides: map[string]string{"POSTGRES_MAX_CONNS": "0"}, wantErr: "POSTGRES_MAX_CONNS"},
+		{name: "ноль воркеров консьюмера", overrides: map[string]string{"CONSUMER_WORKERS": "0"}, wantErr: "CONSUMER_WORKERS"},
 		{name: "нулевой интервал рефрешера конфига", overrides: map[string]string{"POLL_CONFIG_REFRESH": "0s"}, wantErr: "POLL_CONFIG_REFRESH"},
 		{name: "нулевой интервал снапшотов", overrides: map[string]string{"SNAPSHOT_INTERVAL": "0s"}, wantErr: "SNAPSHOT_INTERVAL"},
 		{name: "нулевой rate limit", overrides: map[string]string{"RATE_LIMIT_PER_MIN": "0"}, wantErr: "RATE_LIMIT_PER_MIN"},
 		{name: "публичный адрес без схемы", overrides: map[string]string{"PUBLIC_BASE_URL": "localhost:8080"}, wantErr: "PUBLIC_BASE_URL"},
+		{name: "адрес коллектора без схемы", overrides: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "otel-lgtm:4317"}, wantErr: "OTEL_EXPORTER_OTLP_ENDPOINT"},
+		{name: "нечитаемый адрес коллектора", overrides: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "://bad"}, wantErr: "OTEL_EXPORTER_OTLP_ENDPOINT"},
 		{name: "мусор вместо доверенного прокси", overrides: map[string]string{"TRUSTED_PROXIES": "10.0.0.0/8,not-a-cidr"}, wantErr: "TRUSTED_PROXIES"},
 		{name: "адрес вместо префикса в доверенных прокси", overrides: map[string]string{"TRUSTED_PROXIES": "10.0.0.1"}, wantErr: "TRUSTED_PROXIES"},
 	}
@@ -269,6 +272,18 @@ func TestLoad_ProductionRejectsPubliclyBoundDebugAddr(t *testing.T) {
 			assert.Equal(t, tt.addr != "off", cfg.DebugEnabled())
 		})
 	}
+}
+
+func TestLoad_ConsumerWorkersDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.LoadFrom(minimalEnv())
+	require.NoError(t, err)
+	assert.Equal(t, 64, cfg.ConsumerWorkers, "64 команд в полёте — дефолт, с которым мерили стоимость голоса")
+
+	cfg, err = config.LoadFrom(envWith(map[string]string{"CONSUMER_WORKERS": "256"}))
+	require.NoError(t, err)
+	assert.Equal(t, 256, cfg.ConsumerWorkers)
 }
 
 func TestLoad_ReadDSNFallsBackToPrimary(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 )
 
 type Aggregator interface {
-	Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uint16) (domain.Aggregate, error)
+	Aggregate(ctx context.Context, target domain.Sharding) (domain.Aggregate, error)
 }
 
 type Results interface {
@@ -152,7 +152,7 @@ func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 }
 
 func (s *Snapshotter) TickOnce(ctx context.Context, p *domain.Poll) (domain.Aggregate, error) {
-	fresh, err := s.agg.Aggregate(ctx, p.ID, p.ShardCount)
+	fresh, err := s.agg.Aggregate(ctx, p.Sharding())
 	if err != nil {
 		return domain.Aggregate{}, fmt.Errorf("read counters: %w", err)
 	}

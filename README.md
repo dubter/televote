@@ -155,14 +155,16 @@ Postgres увело бы все поды приёма из балансиров�
 cmd/{api,consumer,snapshot,migrate}
 
 internal/
-  domain     сущности, правила выбора, FSM, агрегат, расчёт ёмкости
-  service    vote, consumer, snapshot, pollcfg, capacity, auth
-  adapter    httpapi, producer, postgres
+  domain     сущности, voterID, правила выбора, FSM, агрегат, расчёт ёмкости
+  service    consumer, snapshot, pollcfg, capacity, auth
+  transport  httpapi — входящие адаптеры: роутер, хендлеры, web/
+  adapter    postgres, redis, producer — исходящие адаптеры
   platform   app, config, metrics, observability, health, httpx
 ```
 
 Зависимости направлены внутрь: `internal/domain` не импортирует ничего из
-проекта, это проверяет `depguard`. Три роли — три бинаря: приём растёт под пик
+проекта, сервисы не знают `rueidis`/`pgx`, хендлеры — `rueidis`/`pgx`/`kgo`;
+всё это проверяет `depguard`. Три роли — три бинаря: приём растёт под пик
 эфира, консьюмеры — под consumer lag, снапшотер не растёт вообще. Стенд
 поднимает ту же топологию.
 

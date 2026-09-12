@@ -20,59 +20,72 @@ var (
 	ErrVersionConflict = domain.ErrVersionConflict
 
 	ErrNotFound = domain.ErrNotFound
+
+	ErrEmptyDSN = errors.New("postgres: empty DSN")
 )
 
 const (
 	defaultMaxConns = int32(10)
+	minConns        = int32(2)
 	pingTimeout     = 5 * time.Second
 )
 
-type Option func(*pgxpool.Config)
-
-func WithMaxConns(n int32) Option {
-	return func(c *pgxpool.Config) {
-		if n > 0 {
-			c.MaxConns = n
-		}
-	}
+type Config struct {
+	DSN      string
+	MaxConns int32
 }
 
-func NewPool(ctx context.Context, dsn string, opts ...Option) (*pgxpool.Pool, error) {
-	if dsn == "" {
-		return nil, errors.New("postgres: empty DSN")
+type DB struct {
+	pool *pgxpool.Pool
+}
+
+func Open(ctx context.Context, cfg Config) (*DB, error) {
+	if cfg.DSN == "" {
+		return nil, ErrEmptyDSN
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
+	pc, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: parse DSN: %w", err)
 	}
 
-	if cfg.MaxConns == 0 {
-		cfg.MaxConns = defaultMaxConns
+	if cfg.MaxConns > 0 {
+		pc.MaxConns = cfg.MaxConns
 	}
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
-	for _, opt := range opts {
-		opt(cfg)
+	if pc.MaxConns <= 0 {
+		pc.MaxConns = defaultMaxConns
 	}
-	if cfg.MinConns == 0 && cfg.MaxConns >= 2 {
-		cfg.MinConns = 2
+	if pc.MinConns == 0 && pc.MaxConns >= minConns {
+		pc.MinConns = minConns
 	}
+	pc.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	pc.ConnConfig.Tracer = otelpgx.NewTracer()
 
-	cfg.ConnConfig.Tracer = otelpgx.NewTracer()
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: create pool: %w", err)
 	}
 
-	pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
+	db := &DB{pool: pool}
+	if err := db.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("postgres: ping: %w", err)
+		return nil, err
 	}
+	return db, nil
+}
 
-	return pool, nil
+func (d *DB) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, pingTimeout)
+	defer cancel()
+
+	if err := d.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("postgres: ping: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) Close() {
+	d.pool.Close()
 }
 
 func isUniqueViolation(err error, constraint string) bool {

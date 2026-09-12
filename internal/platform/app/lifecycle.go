@@ -11,21 +11,38 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/dubter/televote/internal/adapter/httpapi"
 	"github.com/dubter/televote/internal/platform/config"
 	"github.com/dubter/televote/internal/platform/health"
+	"github.com/dubter/televote/internal/platform/metrics"
 	"github.com/dubter/televote/internal/platform/observability"
 )
 
-func Run(ctx context.Context, r Role) error {
+const (
+	telemetryFlushTimeout = 5 * time.Second
+	shortRevisionLen      = 12
+)
+
+type runtime struct {
+	cfg       *config.Config
+	log       *slog.Logger
+	metrics   *metrics.Metrics
+	telemetry *observability.Telemetry
+	gate      *health.Gate
+}
+
+type worker func(context.Context)
+
+func boot(ctx context.Context) (*runtime, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("config: %w", err)
+		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	telemetry, err := observability.Setup(ctx, observability.Config{
@@ -36,12 +53,11 @@ func Run(ctx context.Context, r Role) error {
 		SampleRatio: cfg.TraceSampleRatio,
 	}, stdoutHandler(cfg))
 	if err != nil {
-		return fmt.Errorf("telemetry: %w", err)
+		return nil, fmt.Errorf("telemetry: %w", err)
 	}
 
 	logger := newLogger(cfg, telemetry.Logs)
 	slog.SetDefault(logger)
-	defer flushTelemetry(ctx, telemetry, logger)
 
 	logger.Info("starting",
 		slog.String("http_addr", cfg.HTTPAddr),
@@ -53,26 +69,43 @@ func Run(ctx context.Context, r Role) error {
 		logger.Warn("default secrets from .env.example are in use: suitable only for a test stand")
 	}
 
-	gate := health.NewGate()
+	return &runtime{
+		cfg:       cfg,
+		log:       logger,
+		metrics:   metrics.New(prometheus.DefaultRegisterer),
+		telemetry: telemetry,
+		gate:      health.NewGate(),
+	}, nil
+}
 
-	application, err := buildApp(ctx, cfg, logger, r)
-	if err != nil {
-		return fmt.Errorf("build application: %w", err)
+func (rt *runtime) flush(ctx context.Context) {
+	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryFlushTimeout)
+	defer cancel()
+	if err := rt.telemetry.Shutdown(flushCtx); err != nil {
+		rt.log.Warn("telemetry was not fully flushed", slog.Any("error", err))
 	}
-	defer application.Close() //nolint:contextcheck // drains on its own deadline
+}
 
-	healthHandler := health.Handler(nil, append(application.readiness(), gate.Checker()))
+func (rt *runtime) newMux(readiness ...health.Checker) *http.ServeMux {
+	handler := health.Handler(nil, append(readiness, rt.gate.Checker()))
 
 	mux := http.NewServeMux()
-	mux.Handle("/livez", healthHandler)
-	mux.Handle("/readyz", healthHandler)
+	mux.Handle("/livez", handler)
+	mux.Handle("/readyz", handler)
 	mux.Handle("/metrics", promhttp.Handler())
-	if application.advisor != nil {
-		mux.Handle("/internal/capacity", httpapi.CapacityHandler(application.advisor))
+	return mux
+}
+
+func (rt *runtime) logged(name string, run func(context.Context) error) worker {
+	return func(ctx context.Context) {
+		if err := run(ctx); err != nil {
+			rt.log.ErrorContext(ctx, name+" stopped", slog.Any("error", err))
+		}
 	}
-	if application.router != nil {
-		mux.Handle("/", application.router)
-	}
+}
+
+func (rt *runtime) serve(ctx context.Context, mux *http.ServeMux, workers ...worker) error {
+	cfg, logger := rt.cfg, rt.log
 
 	srv := newServer(ctx, cfg, logger, cfg.HTTPAddr, mux)
 
@@ -93,9 +126,12 @@ func Run(ctx context.Context, r Role) error {
 		}()
 	}
 
-	application.runBackground(sigCtx)
+	var background sync.WaitGroup
+	for _, w := range workers {
+		background.Go(func() { w(sigCtx) })
+	}
 
-	gate.SetReady(true)
+	rt.gate.SetReady(true)
 	logger.Info("ready to accept traffic")
 
 	select {
@@ -107,7 +143,7 @@ func Run(ctx context.Context, r Role) error {
 	stop()
 
 	logger.Info("shutdown signal received, dropping readiness", slog.String("grace", cfg.ShutdownGrace.String()))
-	gate.SetReady(false)
+	rt.gate.SetReady(false)
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, cfg.ShutdownGrace)
 	defer cancel()
@@ -124,13 +160,27 @@ func Run(ctx context.Context, r Role) error {
 	if err := <-serveErr; err != nil {
 		shutdownErrs = append(shutdownErrs, err)
 	}
-	application.waitBackground(cfg.ShutdownGrace)
+	waitBackground(&background, cfg.ShutdownGrace, logger)
 
 	if err := errors.Join(shutdownErrs...); err != nil {
 		return err
 	}
 	logger.Info("stopped cleanly")
 	return nil
+}
+
+func waitBackground(wg *sync.WaitGroup, timeout time.Duration, logger *slog.Logger) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		logger.Warn("background workers did not stop in time", slog.String("timeout", timeout.String()))
+	}
 }
 
 func newServer(ctx context.Context, cfg *config.Config, logger *slog.Logger, addr string, h http.Handler) *http.Server {
@@ -168,16 +218,6 @@ func stdoutHandler(cfg *config.Config) slog.Handler {
 	return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)})
 }
 
-func flushTelemetry(ctx context.Context, t *observability.Telemetry, logger *slog.Logger) {
-	flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), telemetryFlushTimeout)
-	defer cancel()
-	if err := t.Shutdown(flushCtx); err != nil {
-		logger.Warn("telemetry was not fully flushed", slog.Any("error", err))
-	}
-}
-
-const telemetryFlushTimeout = 5 * time.Second
-
 func newLogger(cfg *config.Config, handler slog.Handler) *slog.Logger {
 	return slog.New(handler).With(
 		slog.String("service", cfg.OTelServiceName),
@@ -212,8 +252,6 @@ func buildVersion() string {
 	}
 	return revision
 }
-
-const shortRevisionLen = 12
 
 func parseLevel(s string) slog.Level {
 	var l slog.Level

@@ -43,18 +43,18 @@ func (m *MockAggregator) EXPECT() *MockAggregatorMockRecorder {
 }
 
 // Aggregate mocks base method.
-func (m *MockAggregator) Aggregate(ctx context.Context, pollID uuid.UUID, shardCount uint16) (domain.Aggregate, error) {
+func (m *MockAggregator) Aggregate(ctx context.Context, target domain.Sharding) (domain.Aggregate, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Aggregate", ctx, pollID, shardCount)
+	ret := m.ctrl.Call(m, "Aggregate", ctx, target)
 	ret0, _ := ret[0].(domain.Aggregate)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Aggregate indicates an expected call of Aggregate.
-func (mr *MockAggregatorMockRecorder) Aggregate(ctx, pollID, shardCount any) *gomock.Call {
+func (mr *MockAggregatorMockRecorder) Aggregate(ctx, target any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Aggregate", reflect.TypeOf((*MockAggregator)(nil).Aggregate), ctx, pollID, shardCount)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Aggregate", reflect.TypeOf((*MockAggregator)(nil).Aggregate), ctx, target)
 }
 
 // MockResults is a mock of Results interface.

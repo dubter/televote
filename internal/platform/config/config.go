@@ -68,6 +68,7 @@ type Config struct {
 	VoteRetryBudget   time.Duration `env:"VOTE_RETRY_BUDGET" envDefault:"30s"`
 	BreakerErrorRatio float64       `env:"BREAKER_ERROR_RATIO" envDefault:"0.5"`
 	BreakerWindow     time.Duration `env:"BREAKER_WINDOW" envDefault:"5s"`
+	ConsumerWorkers   int           `env:"CONSUMER_WORKERS" envDefault:"64"`
 
 	PostgresDSN      string `env:"POSTGRES_DSN"`
 	PostgresReadDSN  string `env:"POSTGRES_READ_DSN"`
@@ -250,6 +251,9 @@ func (c *Config) validate() error {
 	if c.BreakerWindow <= 0 {
 		fail("BREAKER_WINDOW", "must be positive")
 	}
+	if c.ConsumerWorkers <= 0 {
+		fail("CONSUMER_WORKERS", "must be positive: it bounds how many votes are in flight to redis")
+	}
 
 	if c.PostgresDSN == "" {
 		fail("POSTGRES_DSN", "is required")
@@ -323,6 +327,11 @@ func (c *Config) validate() error {
 
 	if err := validatePublicBaseURL(c.PublicBaseURL); err != nil {
 		fail("PUBLIC_BASE_URL", "%s", err.Error())
+	}
+	if c.OTLPEndpoint != "" {
+		if err := validateAbsoluteHTTPURL(c.OTLPEndpoint); err != nil {
+			fail("OTEL_EXPORTER_OTLP_ENDPOINT", "%s", err.Error())
+		}
 	}
 
 	if err := c.validateDedupInvariant(); err != nil {
@@ -421,6 +430,10 @@ func validatePublicBaseURL(raw string) error {
 	if raw == "" {
 		return errors.New("is required: links and QR codes are built from it")
 	}
+	return validateAbsoluteHTTPURL(raw)
+}
+
+func validateAbsoluteHTTPURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("cannot be parsed as a URL: %w", err)

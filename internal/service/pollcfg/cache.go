@@ -39,6 +39,10 @@ type HotConfig struct {
 	Salt       []byte
 }
 
+func (c *HotConfig) Sharding() domain.Sharding {
+	return domain.Sharding{PollID: c.ID, ShardCount: c.ShardCount}
+}
+
 type snapshot struct {
 	bySlug map[string]*HotConfig
 	byID   map[uuid.UUID]*HotConfig

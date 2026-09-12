@@ -19,12 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/dubter/televote/internal/adapter/httpapi"
-	"github.com/dubter/televote/internal/adapter/httpapi/mocks"
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/auth"
 	"github.com/dubter/televote/internal/service/capacity"
 	"github.com/dubter/televote/internal/service/pollcfg"
+	"github.com/dubter/televote/internal/transport/httpapi"
+	"github.com/dubter/televote/internal/transport/httpapi/mocks"
 )
 
 var (
@@ -222,7 +222,7 @@ func TestVote_UnknownPollIsNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-func TestPollConfig_ContainsServerTimeAndCacheHeader(t *testing.T) {
+func TestPollConfig_IsCacheableAndCarriesNoPerRequestData(t *testing.T) {
 	t.Parallel()
 
 	h, _ := newPublic(t, hotConfig(t, domain.PollTypeMultiple, 1, 2), inWindow, nil, 0)
@@ -234,19 +234,33 @@ func TestPollConfig_ContainsServerTimeAndCacheHeader(t *testing.T) {
 	assert.Contains(t, w.Header().Get("Cache-Control"), "max-age",
 		"конфиг одинаков для всех зрителей и обязан кэшироваться на CDN")
 
-	var got struct {
-		Question   string   `json:"question"`
-		Options    []string `json:"options"`
-		Min        uint8    `json:"min_choices"`
-		Max        uint8    `json:"max_choices"`
-		ServerTime string   `json:"server_time"`
-	}
+	var got map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 
-	assert.Equal(t, "кто победит?", got.Question)
-	assert.Equal(t, []string{"первый", "второй", "третий"}, got.Options)
-	assert.EqualValues(t, 1, got.Min)
-	assert.EqualValues(t, 2, got.Max)
+	assert.Equal(t, "кто победит?", got["question"])
+	assert.Equal(t, []any{"первый", "второй", "третий"}, got["options"])
+	assert.EqualValues(t, 1, got["min_choices"])
+	assert.EqualValues(t, 2, got["max_choices"])
+	assert.NotContains(t, got, "server_time",
+		"время в кэшируемом ответе устаревает вместе с кэшем и ломает поправку часов у клиента")
+}
+
+func TestServerTime_IsNeverCachedAndReflectsTheClock(t *testing.T) {
+	t.Parallel()
+
+	h, _ := newPublic(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/time", nil))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"),
+		"серверное время индивидуально для каждого запроса: ни CDN, ни браузер кэшировать не должны")
+
+	var got struct {
+		ServerTime string `json:"server_time"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, inWindow.Format(time.RFC3339), got.ServerTime,
 		"клиент работает по серверному времени: у зрителя часы могут врать")
 }
@@ -703,4 +717,13 @@ func TestAdminPage_IsServedAndNotIndexed(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "noindex",
 		"админка не должна попадать в поисковый индекс")
+}
+
+func TestStatic_FaviconIsAnsweredWithoutHittingTheAPI(t *testing.T) {
+	t.Parallel()
+
+	w := fetchPage(t, "/favicon.ico")
+
+	assert.Equal(t, http.StatusNoContent, w.Code, "браузер просит favicon на каждой загрузке: 404 — это 100 млн лишних ошибок в метриках")
+	assert.Contains(t, w.Header().Get("Cache-Control"), "max-age", "ответ обязан кэшироваться, чтобы браузер не спрашивал снова")
 }

@@ -37,12 +37,27 @@ linters:
           allow:
             - $gostd
             - github.com/google/uuid
-        no-http-in-core:
+        no-infra-in-core:
           files:
             - "**/internal/service/**"
+            - "**/internal/domain/**"
           deny:
             - pkg: net/http
-              desc: "HTTP lives only in internal/adapter; the service layer must not know about it"
+              desc: "HTTP lives only in internal/transport; the service layer must not know about it"
+            - pkg: github.com/redis/rueidis
+              desc: "Redis lives only in internal/adapter/redis; services see domain types and errors"
+            - pkg: github.com/jackc/pgx/v5
+              desc: "Postgres lives only in internal/adapter/postgres; services see repository interfaces"
+        no-infra-in-transport:
+          files:
+            - "**/internal/transport/**"
+          deny:
+            - pkg: github.com/redis/rueidis
+              desc: "handlers talk to services and adapters, never to Redis directly"
+            - pkg: github.com/jackc/pgx/v5
+              desc: "handlers talk to services and adapters, never to Postgres directly"
+            - pkg: github.com/twmb/franz-go
+              desc: "handlers publish through internal/adapter/producer, never through kgo directly"
         single-logger:
           files:
             - "**/internal/**"

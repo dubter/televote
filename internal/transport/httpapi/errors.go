@@ -7,7 +7,6 @@ import (
 
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/platform/httpx"
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 type errorResponse struct {
@@ -35,8 +34,8 @@ func classify(err error) (status int, code string) {
 		return http.StatusOK, ""
 
 	case errors.Is(err, domain.ErrInvalidChoices),
-		errors.Is(err, vote.ErrInvalidArgs),
-		errors.Is(err, vote.ErrBadClientID),
+		errors.Is(err, domain.ErrInvalidVote),
+		errors.Is(err, domain.ErrBadClientID),
 		errors.Is(err, domain.ErrInvalidPoll),
 		errors.Is(err, errBadRequest):
 		return http.StatusBadRequest, "invalid_choices"

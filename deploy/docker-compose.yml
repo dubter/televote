@@ -33,10 +33,6 @@ x-app: &app
     migrate: { condition: service_completed_successfully }
     kafka-init: { condition: service_completed_successfully }
     redis-init: { condition: service_completed_successfully }
-  healthcheck:
-    interval: 5s
-    timeout: 3s
-    retries: 12
 
 services:
   postgres:
