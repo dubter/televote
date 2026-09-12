@@ -59,21 +59,17 @@ func RunAPI(ctx context.Context) error {
 		return err
 	}
 
-	router := httpapi.NewRouter(public, admin, httpapi.StaticRoutes(cfg.PublicBaseURL), httpapi.RouterConfig{
-		TrustedProxies:   cfg.TrustedProxies,
-		DatacenterRanges: rt.datacenterRanges(),
-		VoteRateLimit:    cfg.RateLimitPerMin,
-		AdminRateLimit:   adminRateLimit,
-		Logger:           rt.log,
-		RequestObserver:  rt.metrics,
-		RateWindow:       time.Minute,
-		ServiceName:      cfg.OTelServiceName,
+	router := httpapi.APIRouter(rt.probes(sink.Ping), public, admin, httpapi.NewPages(cfg.PublicBaseURL), httpapi.RouterConfig{
+		TrustedProxies:  cfg.TrustedProxies,
+		VoteRateLimit:   cfg.RateLimitPerMin,
+		AdminRateLimit:  adminRateLimit,
+		Logger:          rt.log,
+		RequestObserver: rt.metrics,
+		RateWindow:      time.Minute,
+		ServiceName:     cfg.OTelServiceName,
 	})
 
-	mux := rt.newMux(sink.Ping)
-	mux.Handle("/", router)
-
-	return rt.serve(ctx, mux, cache.Run)
+	return rt.serve(ctx, router, cache.Run)
 }
 
 func (rt *runtime) drain(name string, closeFn func() error) {

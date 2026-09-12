@@ -6,9 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"net/netip"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -123,36 +120,6 @@ func (rt *runtime) bootstrapAdmin(ctx context.Context, admins *postgres.AdminRep
 		rt.log.Info("admin account created", slog.String("login", rt.cfg.AdminBootstrapLogin))
 	}
 	return nil
-}
-
-func (rt *runtime) datacenterRanges() []netip.Prefix {
-	if !rt.cfg.ASNBlockEnabled {
-		return nil
-	}
-
-	data, err := os.ReadFile(rt.cfg.ASNBlocklistPath)
-	if err != nil {
-		rt.log.Warn("datacenter network list not read, filter disabled",
-			slog.String("path", rt.cfg.ASNBlocklistPath), slog.String("error", err.Error()))
-		return nil
-	}
-
-	var out []netip.Prefix
-	for line := range strings.SplitSeq(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		prefix, parseErr := netip.ParsePrefix(line)
-		if parseErr != nil {
-			rt.log.Warn("datacenter list line skipped", slog.String("line", line))
-			continue
-		}
-		out = append(out, prefix)
-	}
-
-	rt.log.Info("datacenter network filter loaded", slog.Int("prefixes", len(out)))
-	return out
 }
 
 func adminJWTBytes(raw string) []byte {

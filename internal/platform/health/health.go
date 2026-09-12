@@ -16,24 +16,19 @@ type Checker func(context.Context) error
 
 var ErrNotAcceptingTraffic = errors.New("instance is not accepting traffic: warming up or shutting down")
 
-type health struct {
+type Probes struct {
 	live    []Checker
 	ready   []Checker
 	timeout time.Duration
 }
 
-func Handler(live, ready []Checker) http.Handler {
-	h := &health{live: live, ready: ready, timeout: defaultCheckTimeout}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
-		h.serve(w, r, h.live)
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		h.serve(w, r, h.ready)
-	})
-	return mux
+func New(live, ready []Checker) *Probes {
+	return &Probes{live: live, ready: ready, timeout: defaultCheckTimeout}
 }
+
+func (p *Probes) Live(w http.ResponseWriter, r *http.Request) { p.serve(w, r, p.live) }
+
+func (p *Probes) Ready(w http.ResponseWriter, r *http.Request) { p.serve(w, r, p.ready) }
 
 type Gate struct {
 	ready atomic.Bool
@@ -57,7 +52,7 @@ type healthResponse struct {
 	Errors []string `json:"errors,omitempty"`
 }
 
-func (h *health) serve(w http.ResponseWriter, r *http.Request, checkers []Checker) {
+func (p *Probes) serve(w http.ResponseWriter, r *http.Request, checkers []Checker) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		writeJSON(w, http.StatusMethodNotAllowed, healthResponse{
@@ -66,7 +61,7 @@ func (h *health) serve(w http.ResponseWriter, r *http.Request, checkers []Checke
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+	ctx, cancel := context.WithTimeout(r.Context(), p.timeout)
 	defer cancel()
 
 	failures := runChecks(ctx, checkers)

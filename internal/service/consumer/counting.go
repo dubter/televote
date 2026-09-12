@@ -152,20 +152,20 @@ func newBreaker(cfg Config, log *slog.Logger, obs Observer) *gobreaker.CircuitBr
 	})
 }
 
-func (c *Counting) Run(ctx context.Context) error {
+func (c *Counting) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		fetches := c.client.PollFetches(ctx)
 		if errs := fetches.Errors(); len(errs) > 0 {
 			for _, e := range errs {
 				if errors.Is(e.Err, context.Canceled) {
-					return nil //nolint:nilerr // cancellation is a normal shutdown, not a failure
+					return
 				}
 				c.log.ErrorContext(ctx, "consumer: read from kafka",
 					slog.String("topic", e.Topic), slog.String("error", e.Err.Error()))
 			}
 			select {
 			case <-ctx.Done():
-				return nil
+				return
 			case <-time.After(fetchErrorBackoff):
 			}
 			continue
@@ -178,7 +178,6 @@ func (c *Counting) Run(ctx context.Context) error {
 				slog.String("error", err.Error()))
 		}
 	}
-	return nil
 }
 
 func (c *Counting) applyBatch(ctx context.Context, fetches kgo.Fetches) {

@@ -16,17 +16,18 @@ import (
 //go:embed web/vote.html web/admin.html
 var webFS embed.FS
 
-func StaticRoutes(publicBaseURL string) chi.Router {
-	r := chi.NewRouter()
+type Pages struct {
+	vote  http.HandlerFunc
+	admin http.HandlerFunc
+	qr    http.HandlerFunc
+}
 
-	votePage := mustRead("web/vote.html")
-	adminPage := mustRead("web/admin.html")
-
-	r.Get("/p/{slug}", servePage(votePage))
-	r.Get("/admin", servePage(adminPage))
-	r.Get("/p/{slug}/qr.png", qrHandler(publicBaseURL))
-	r.Get("/favicon.ico", noFavicon)
-	return r
+func NewPages(publicBaseURL string) Pages {
+	return Pages{
+		vote:  servePage(mustRead("web/vote.html")),
+		admin: servePage(mustRead("web/admin.html")),
+		qr:    qrHandler(publicBaseURL),
+	}
 }
 
 func noFavicon(w http.ResponseWriter, _ *http.Request) {

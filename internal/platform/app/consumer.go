@@ -7,6 +7,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/dubter/televote/internal/service/consumer"
+	"github.com/dubter/televote/internal/transport/httpapi"
 )
 
 func RunConsumer(ctx context.Context) error {
@@ -57,7 +58,7 @@ func RunConsumer(ctx context.Context) error {
 		return fmt.Errorf("counting consumer: %w", err)
 	}
 
-	mux := rt.newMux(pgRead.Ping, store.Ping, kafka.Ping)
+	router := httpapi.ConsumerRouter(rt.probes(pgRead.Ping, store.Ping, kafka.Ping))
 
-	return rt.serve(ctx, mux, cache.Run, rt.logged("counting consumer", counting.Run))
+	return rt.serve(ctx, router, cache.Run, counting.Run)
 }

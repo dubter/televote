@@ -26,16 +26,22 @@ admin_token() {
 }
 
 create_poll() {
-  local slug=$1 token=$2 question=${3:-chaos}
+  local slug=$1 token=$2 question=${3:-chaos} options=${4:-'["да","нет"]'} audience=${5:-10000}
   curl -fsS -X POST "${API}/admin/polls" -H 'Content-Type: application/json' \
     -H "Authorization: Bearer ${token}" -d @- >/dev/null <<JSON
-{"slug":"${slug}","question":"${question}","type":"single","options":["да","нет"],
+{"slug":"${slug}","question":"${question}","type":"single","options":${options},
  "opens_at":"$(window_start)","closes_at":"$(window_end)",
- "expected_audience":10000,"expected_conversion":0.3}
+ "expected_audience":${audience},"expected_conversion":0.3}
 JSON
   curl -fsS -X POST "${API}/admin/polls/${slug}/open" -H "Authorization: Bearer ${token}" >/dev/null
-  sleep 3
-  say "опрос ${slug} создан и открыт"
+  for _ in $(seq 1 20); do
+    if curl -fsS "${API}/polls/${slug}" >/dev/null 2>&1; then
+      say "опрос ${slug} создан и открыт"
+      return
+    fi
+    sleep 0.5
+  done
+  fail "опрос ${slug} не появился в публичном API"
 }
 
 vote_on() {

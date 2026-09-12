@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/dubter/televote/internal/domain"
+	"github.com/dubter/televote/internal/platform/health"
 	"github.com/dubter/televote/internal/service/auth"
 	"github.com/dubter/televote/internal/service/capacity"
 	"github.com/dubter/televote/internal/service/pollcfg"
@@ -61,9 +63,9 @@ func hotConfig(t *testing.T, pollType domain.PollType, minChoices, maxChoices ui
 	}
 }
 
-func newPublic(
+func newPublicHandler(
 	t *testing.T, cfg *pollcfg.HotConfig, now time.Time, obs httpapi.Observer, maxBody int64,
-) (http.Handler, *mocks.MockVoteSink) {
+) (*httpapi.PublicHandler, *mocks.MockVoteSink) {
 	t.Helper()
 
 	ctrl := gomock.NewController(t)
@@ -76,7 +78,16 @@ func newPublic(
 
 	h, err := httpapi.NewPublicHandler(cache, sink, obs, func() time.Time { return now }, maxBody)
 	require.NoError(t, err)
-	return h.Routes(), sink
+	return h, sink
+}
+
+func newPublic(
+	t *testing.T, cfg *pollcfg.HotConfig, now time.Time, obs httpapi.Observer, maxBody int64,
+) (http.Handler, *mocks.MockVoteSink) {
+	t.Helper()
+
+	h, sink := newPublicHandler(t, cfg, now, obs, maxBody)
+	return httpapi.PublicRoutes(h), sink
 }
 
 func postVote(t *testing.T, h http.Handler, slug, body string) *httptest.ResponseRecorder {
@@ -285,6 +296,7 @@ func TestVote_SameVoterYieldsSameDedupKey(t *testing.T) {
 
 type adminFixture struct {
 	handler http.Handler
+	admin   *httpapi.AdminHandler
 	polls   *mocks.MockPollStore
 	results *mocks.MockResultStore
 	admins  *mocks.MockAdminStore
@@ -314,7 +326,7 @@ func newAdminFixture(t *testing.T, role auth.Role, minLeadTime time.Duration) ad
 	require.NoError(t, err)
 
 	return adminFixture{
-		handler: h.Routes(), polls: polls, results: results, admins: admins,
+		handler: httpapi.AdminRoutes(h), admin: h, polls: polls, results: results, admins: admins,
 		tokens: tokens, userID: userID, token: token,
 	}
 }
@@ -631,21 +643,37 @@ func TestFR5_ClosedPollReturnsFinalResult(t *testing.T) {
 	assert.True(t, got.Final)
 }
 
-func TestCapacityHandler_ServesAdvice(t *testing.T) {
-	t.Parallel()
+func okHealth() *health.Probes {
+	return health.New(nil, nil)
+}
 
-	ctrl := gomock.NewController(t)
-	advisor := mocks.NewMockCapacityAdvisor(ctrl)
+func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	return w
+}
+
+func liveAdvisor(t *testing.T) *mocks.MockCapacityAdvisor {
+	t.Helper()
+
+	advisor := mocks.NewMockCapacityAdvisor(gomock.NewController(t))
 	advisor.EXPECT().Advise(gomock.Any()).Return(capacity.Advice{
 		Phase:    capacity.PhaseLive,
 		Reason:   "votes are being accepted",
 		PollSlug: "final",
 		Desired:  domain.Capacity{VoteAPI: 12, Consumers: 3, RedisMasters: 7, KafkaPartitions: 3},
-	}, nil)
+	}, nil).AnyTimes()
+	return advisor
+}
 
-	w := httptest.NewRecorder()
-	httpapi.CapacityHandler(advisor).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/capacity", nil))
+func TestSnapshotRouter_ServesCapacityAdviceAndProbes(t *testing.T) {
+	t.Parallel()
 
+	r := httpapi.SnapshotRouter(okHealth(), liveAdvisor(t))
+
+	w := get(t, r, "/internal/capacity")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	var got struct {
@@ -657,13 +685,73 @@ func TestCapacityHandler_ServesAdvice(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, string(capacity.PhaseLive), got.Phase)
 	assert.Equal(t, 7, got.Desired.RedisMasters, "оператор масштабирует кластер по этому числу")
+
+	assert.Equal(t, http.StatusOK, get(t, r, "/readyz").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/livez").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/metrics").Code)
+	assert.Equal(t, http.StatusNotFound, get(t, r, "/api/v1/time").Code, "снапшотер не принимает голоса")
+}
+
+func TestConsumerRouter_ExposesOnlyProbesAndMetrics(t *testing.T) {
+	t.Parallel()
+
+	r := httpapi.ConsumerRouter(okHealth())
+
+	assert.Equal(t, http.StatusOK, get(t, r, "/readyz").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/livez").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/metrics").Code)
+	assert.Equal(t, http.StatusNotFound, get(t, r, "/internal/capacity").Code)
+	assert.Equal(t, http.StatusNotFound, get(t, r, "/api/v1/time").Code)
+	assert.Equal(t, http.StatusNotFound, get(t, r, "/p/final").Code)
+}
+
+func TestAPIRouter_ServesProbesOutsideRequestMetrics(t *testing.T) {
+	t.Parallel()
+
+	seen := &routeLog{}
+	public, _ := newPublicHandler(t, hotConfig(t, domain.PollTypeSingle, 1, 1), inWindow, nil, 0)
+	r := httpapi.APIRouter(okHealth(), public, newAdminFixture(t, auth.RoleAdmin, 0).admin, httpapi.NewPages("https://vote.example"), httpapi.RouterConfig{
+		VoteRateLimit:   100,
+		AdminRateLimit:  100,
+		RateWindow:      time.Minute,
+		RequestObserver: seen,
+		ServiceName:     "televote",
+	})
+
+	assert.Equal(t, http.StatusOK, get(t, r, "/readyz").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/metrics").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/api/v1/time").Code)
+	assert.Equal(t, http.StatusOK, get(t, r, "/p/final").Code)
+	assert.Equal(t, http.StatusNotFound, get(t, r, "/internal/capacity").Code, "ёмкость считает снапшотер, не API")
+
+	assert.NotContains(t, seen.routes, "/readyz", "пробы живут вне middleware и не попадают в метрики запросов")
+	assert.NotContains(t, seen.routes, "/metrics")
+	assert.Contains(t, seen.routes, "/api/v1/time")
+}
+
+type routeLog struct {
+	mu     sync.Mutex
+	routes []string
+}
+
+func (l *routeLog) HTTPRequest(_, route, _ string, _ float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.routes = append(l.routes, route)
+}
+
+func TestDebugRouter_ServesPprof(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, http.StatusOK, get(t, httpapi.DebugRouter(), "/debug/pprof/").Code)
+	assert.Equal(t, http.StatusOK, get(t, httpapi.DebugRouter(), "/debug/pprof/cmdline").Code)
 }
 
 func fetchPage(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	w := httptest.NewRecorder()
-	httpapi.StaticRoutes("https://vote.example").ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+	httpapi.PageRoutes(httpapi.NewPages("https://vote.example")).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 	return w
 }
 

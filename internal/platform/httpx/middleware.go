@@ -3,7 +3,6 @@ package httpx
 import (
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -28,25 +27,6 @@ func RateLimit(perWindow int, window time.Duration) func(http.Handler) http.Hand
 			writeError(w, http.StatusTooManyRequests, "rate_limited")
 		}),
 	)
-}
-
-func BlockDatacenterASN(ranges []netip.Prefix) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		if len(ranges) == 0 {
-			return next
-		}
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if addr := IPFromContext(r.Context()); addr.IsValid() {
-				for _, prefix := range ranges {
-					if prefix.Contains(addr) {
-						writeError(w, http.StatusForbidden, "blocked")
-						return
-					}
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 //nolint:contextcheck // context comes from the request itself, which is what we want
