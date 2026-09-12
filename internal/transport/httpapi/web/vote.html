@@ -42,10 +42,13 @@ function done(text,cls){show('<div id="msg" class="'+cls+'">'+esc(text)+"</div>"
 
 async function load(){
   try{
-    const r=await fetch("/api/v1/polls/"+encodeURIComponent(slug));
+    const [r,clock]=await Promise.all([
+      fetch("/api/v1/polls/"+encodeURIComponent(slug)),
+      fetch("/api/v1/time",{cache:"no-store"})
+    ]);
     if(!r.ok)return done("Опрос не найден","err");
     cfg=await r.json();
-    skew=new Date(cfg.server_time).getTime()-Date.now();
+    if(clock.ok)skew=new Date((await clock.json()).server_time).getTime()-Date.now();
     if(store.get("done:"+slug))return done("Ваш голос учтён","ok");
     render();
   }catch(e){done("Не удалось загрузить опрос","err")}

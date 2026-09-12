@@ -10,14 +10,15 @@ import (
 )
 
 func main() {
-	healthcheck := flag.Bool("healthcheck", false, "check /readyz of the local process and exit")
+	healthcheck := flag.Bool("healthcheck", false,
+		"probe /readyz of the running process and exit: docker healthcheck can only exec, and the image has no shell or curl")
 	flag.Parse()
 
 	if *healthcheck {
 		os.Exit(app.SelfHealthcheck())
 	}
 
-	if err := app.Run(context.Background(), app.RoleConsumer); err != nil {
+	if err := app.RunConsumer(context.Background()); err != nil {
 		slog.Error("service stopped with an error", slog.Any("error", err))
 		os.Exit(1)
 	}

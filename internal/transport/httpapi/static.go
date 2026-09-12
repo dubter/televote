@@ -25,7 +25,13 @@ func StaticRoutes(publicBaseURL string) chi.Router {
 	r.Get("/p/{slug}", servePage(votePage))
 	r.Get("/admin", servePage(adminPage))
 	r.Get("/p/{slug}/qr.png", qrHandler(publicBaseURL))
+	r.Get("/favicon.ico", noFavicon)
 	return r
+}
+
+func noFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func mustRead(name string) []byte {

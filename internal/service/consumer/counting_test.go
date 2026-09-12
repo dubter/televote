@@ -3,7 +3,7 @@ package consumer
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -18,7 +18,6 @@ import (
 	"github.com/dubter/televote/internal/domain"
 	"github.com/dubter/televote/internal/service/consumer/mocks"
 	"github.com/dubter/televote/internal/service/pollcfg"
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 var (
@@ -26,7 +25,7 @@ var (
 	closesAt = opensAt.Add(time.Minute)
 	testSalt = []byte("consumer-test-salt-0123456789abc")
 
-	errRedisDown = errors.New("redis недоступен")
+	errRedisDown = fmt.Errorf("%w: redis недоступен", domain.ErrStoreUnavailable)
 )
 
 func testConfig(t *testing.T) *pollcfg.HotConfig {
@@ -66,7 +65,7 @@ func newTestCounting(t *testing.T, cfg Config) (
 func record(t *testing.T, cfg *pollcfg.HotConfig, clientID string, choices []uint8, at time.Time) *kgo.Record {
 	t.Helper()
 
-	v, err := vote.DeriveVoterID(cfg.Salt, clientID)
+	v, err := domain.DeriveVoterID(cfg.Salt, clientID)
 	require.NoError(t, err)
 
 	payload, err := json.Marshal(domain.VoteMessage{
@@ -84,11 +83,11 @@ func TestCounting_AppliesVoteExactlyOnceWithPollShardCount(t *testing.T) {
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).Times(1)
 	applier.EXPECT().
-		Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{1}).
-		Return(vote.ResultCounted, nil).
+		Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), []uint8{1}).
+		Return(domain.VoteCounted, nil).
 		Times(1)
 	obs.EXPECT().ApplySeconds(gomock.Any()).Times(1)
-	obs.EXPECT().VoteCounted(vote.ResultCounted.String()).Times(1)
+	obs.EXPECT().VoteCounted(domain.VoteCounted.String()).Times(1)
 
 	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{1}, opensAt.Add(time.Second)))
 }
@@ -104,13 +103,13 @@ func TestCounting_DuplicateDeliveryDoesNotDoubleCount(t *testing.T) {
 	obs.EXPECT().VoteRejected(reasonApplyFailed).AnyTimes()
 
 	gomock.InOrder(
-		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{2}).
-			Return(vote.ResultCounted, nil),
-		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), []uint8{2}).
-			Return(vote.ResultAlreadyCounted, nil).Times(4),
+		applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), []uint8{2}).
+			Return(domain.VoteCounted, nil),
+		applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), []uint8{2}).
+			Return(domain.VoteAlreadyCounted, nil).Times(4),
 	)
-	obs.EXPECT().VoteCounted(vote.ResultCounted.String()).Times(1)
-	obs.EXPECT().VoteCounted(vote.ResultAlreadyCounted.String()).Times(4)
+	obs.EXPECT().VoteCounted(domain.VoteCounted.String()).Times(1)
+	obs.EXPECT().VoteCounted(domain.VoteAlreadyCounted.String()).Times(4)
 
 	rec := record(t, cfg, "viewer", []uint8{2}, opensAt.Add(time.Second))
 	for range 5 {
@@ -125,11 +124,11 @@ func TestCounting_UsesProducedAtNotProcessingTime(t *testing.T) {
 	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
-	applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
-		Return(vote.ResultCounted, nil).
+	applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+		Return(domain.VoteCounted, nil).
 		Times(1)
 	obs.EXPECT().ApplySeconds(gomock.Any())
-	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
+	obs.EXPECT().VoteCounted(domain.VoteCounted.String())
 
 	c.applyRecord(context.Background(), record(t, cfg, "late", []uint8{0}, closesAt.Add(-time.Second)))
 }
@@ -189,15 +188,15 @@ func TestCounting_RetriesRetryableErrorUntilSuccess(t *testing.T) {
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
 	gomock.InOrder(
-		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
-			Return(vote.Result(0), errRedisDown),
-		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
-			Return(vote.Result(0), errRedisDown),
-		applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
-			Return(vote.ResultCounted, nil),
+		applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+			Return(domain.VoteResult(0), errRedisDown),
+		applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+			Return(domain.VoteResult(0), errRedisDown),
+		applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+			Return(domain.VoteCounted, nil),
 	)
 	obs.EXPECT().ApplySeconds(gomock.Any())
-	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
+	obs.EXPECT().VoteCounted(domain.VoteCounted.String())
 
 	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
 }
@@ -209,8 +208,8 @@ func TestCounting_DoesNotRetryPermanentError(t *testing.T) {
 	c, applier, lookup, obs := newTestCounting(t, Config{RetryBudget: time.Second, LookupBudget: time.Second})
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true)
-	applier.EXPECT().Cast(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(vote.Result(0), vote.ErrInvalidArgs).
+	applier.EXPECT().Apply(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(domain.VoteResult(0), domain.ErrInvalidVote).
 		Times(1)
 	obs.EXPECT().ApplySeconds(gomock.Any())
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
@@ -228,14 +227,14 @@ func TestCounting_HoldsPartitionInsteadOfDroppingVote(t *testing.T) {
 	})
 
 	lookup.EXPECT().ByID(cfg.ID).Return(cfg, true).AnyTimes()
-	applier.EXPECT().Cast(gomock.Any(), cfg.ID, cfg.ShardCount, gomock.Any(), gomock.Any()).
-		Return(vote.Result(0), errRedisDown).
+	applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+		Return(domain.VoteResult(0), errRedisDown).
 		MinTimes(2)
 	obs.EXPECT().ApplySeconds(gomock.Any()).AnyTimes()
 	obs.EXPECT().VoteRejected(reasonApplyFailed).AnyTimes()
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
 
-	voter, err := vote.DeriveVoterID(cfg.Salt, "viewer")
+	voter, err := domain.DeriveVoterID(cfg.Salt, "viewer")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
@@ -244,7 +243,7 @@ func TestCounting_HoldsPartitionInsteadOfDroppingVote(t *testing.T) {
 	res, err := c.applyWithRetry(ctx, cfg, voter, []uint8{0})
 	require.ErrorIs(t, err, context.DeadlineExceeded,
 		"ретраи обязаны идти, пока жив контекст: держать партицию лучше, чем потерять голос")
-	assert.Equal(t, vote.Result(0), res, "неприменённый голос не имеет права выглядеть посчитанным")
+	assert.Equal(t, domain.VoteResult(0), res, "неприменённый голос не имеет права выглядеть посчитанным")
 
 	short, cancelShort := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancelShort()
@@ -263,10 +262,10 @@ func TestCounting_WaitsForConfigInsteadOfDroppingVote(t *testing.T) {
 		lookup.EXPECT().ByID(cfg.ID).Return(nil, false),
 		lookup.EXPECT().ByID(cfg.ID).Return(cfg, true),
 	)
-	applier.EXPECT().Cast(gomock.Any(), cfg.ID, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(vote.ResultCounted, nil)
+	applier.EXPECT().Apply(gomock.Any(), cfg.Sharding(), gomock.Any(), gomock.Any()).
+		Return(domain.VoteCounted, nil)
 	obs.EXPECT().ApplySeconds(gomock.Any())
-	obs.EXPECT().VoteCounted(vote.ResultCounted.String())
+	obs.EXPECT().VoteCounted(domain.VoteCounted.String())
 
 	c.applyRecord(context.Background(), record(t, cfg, "viewer", []uint8{0}, opensAt.Add(time.Second)))
 }
@@ -303,8 +302,8 @@ func TestCounting_BreakerStopsCallingRedisAfterErrorRatio(t *testing.T) {
 	obs.EXPECT().VoteCounted(gomock.Any()).Times(0)
 	obs.EXPECT().SetBreakerOpen(true).MinTimes(1)
 
-	applier.EXPECT().Cast(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(vote.Result(0), errRedisDown).
+	applier.EXPECT().Apply(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(domain.VoteResult(0), errRedisDown).
 		MinTimes(breakerMinRequests).
 		MaxTimes(breakerMinRequests * 3)
 
@@ -314,7 +313,7 @@ func TestCounting_BreakerStopsCallingRedisAfterErrorRatio(t *testing.T) {
 		cancel()
 	}
 
-	_, err := c.breaker.Execute(func() (vote.Result, error) { return vote.ResultCounted, nil })
+	_, err := c.breaker.Execute(func() (domain.VoteResult, error) { return domain.VoteCounted, nil })
 	require.Error(t, err, "брейкер обязан быть открыт после серии отказов Redis")
-	assert.True(t, c.retryable(err), "открытый брейкер — временное состояние, голос надо повторить")
+	assert.True(t, retryable(err), "открытый брейкер — временное состояние, голос надо повторить")
 }

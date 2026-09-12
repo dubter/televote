@@ -17,11 +17,11 @@ type AdminRepo struct {
 	db *pgxpool.Pool
 }
 
-func NewAdminRepo(db *pgxpool.Pool) (*AdminRepo, error) {
+func NewAdminRepo(db *DB) (*AdminRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: AdminRepo without a connection pool")
 	}
-	return &AdminRepo{db: db}, nil
+	return &AdminRepo{db: db.pool}, nil
 }
 
 func (r *AdminRepo) ByLogin(ctx context.Context, login string) (*domain.Admin, error) {

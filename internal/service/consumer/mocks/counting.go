@@ -13,8 +13,8 @@ import (
 	context "context"
 	reflect "reflect"
 
+	domain "github.com/dubter/televote/internal/domain"
 	pollcfg "github.com/dubter/televote/internal/service/pollcfg"
-	vote "github.com/dubter/televote/internal/service/vote"
 	uuid "github.com/google/uuid"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -43,19 +43,19 @@ func (m *MockApplier) EXPECT() *MockApplierMockRecorder {
 	return m.recorder
 }
 
-// Cast mocks base method.
-func (m *MockApplier) Cast(ctx context.Context, pollID uuid.UUID, shardCount uint16, v vote.VoterID, choices []uint8) (vote.Result, error) {
+// Apply mocks base method.
+func (m *MockApplier) Apply(ctx context.Context, target domain.Sharding, v domain.VoterID, choices []uint8) (domain.VoteResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Cast", ctx, pollID, shardCount, v, choices)
-	ret0, _ := ret[0].(vote.Result)
+	ret := m.ctrl.Call(m, "Apply", ctx, target, v, choices)
+	ret0, _ := ret[0].(domain.VoteResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// Cast indicates an expected call of Cast.
-func (mr *MockApplierMockRecorder) Cast(ctx, pollID, shardCount, v, choices any) *gomock.Call {
+// Apply indicates an expected call of Apply.
+func (mr *MockApplierMockRecorder) Apply(ctx, target, v, choices any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cast", reflect.TypeOf((*MockApplier)(nil).Cast), ctx, pollID, shardCount, v, choices)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Apply", reflect.TypeOf((*MockApplier)(nil).Apply), ctx, target, v, choices)
 }
 
 // MockConfigLookup is a mock of ConfigLookup interface.

@@ -22,11 +22,11 @@ type PollRepo struct {
 	db *pgxpool.Pool
 }
 
-func NewPollRepo(db *pgxpool.Pool) (*PollRepo, error) {
+func NewPollRepo(db *DB) (*PollRepo, error) {
 	if db == nil {
 		return nil, errors.New("postgres: PollRepo without a connection pool")
 	}
-	return &PollRepo{db: db}, nil
+	return &PollRepo{db: db.pool}, nil
 }
 
 const pollColumns = `p.id, p.slug, p.question, p.type, p.min_choices, p.max_choices,
@@ -35,7 +35,6 @@ const pollColumns = `p.id, p.slug, p.question, p.type, p.min_choices, p.max_choi
 	p.version`
 
 const (
-	predPollByID   = `p.id = $1`
 	predPollBySlug = `p.slug = $1`
 
 	predPollActive = `p.status IN ('scheduled', 'open')`

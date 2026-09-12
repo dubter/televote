@@ -1,4 +1,4 @@
-package vote
+package redis
 
 import (
 	_ "embed"
@@ -10,5 +10,3 @@ import (
 var voteScriptSource string
 
 var voteScript = rueidis.NewLuaScript(voteScriptSource)
-
-const ballotsField = "b"

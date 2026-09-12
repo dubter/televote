@@ -88,17 +88,21 @@ func startAll(t *testing.T) (*postgres.PollRepo, *postgres.ResultRepo, *postgres
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 
-	pool, err := postgres.NewPool(ctx, dsn)
+	schema, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	t.Cleanup(schema.Close)
+	applySchema(ctx, t, schema)
 
-	applySchema(ctx, t, pool)
+	db, err := postgres.Open(ctx, postgres.Config{DSN: dsn})
+	require.NoError(t, err)
+	t.Cleanup(db.Close)
+	require.NoError(t, db.Ping(ctx))
 
-	polls, err := postgres.NewPollRepo(pool)
+	polls, err := postgres.NewPollRepo(db)
 	require.NoError(t, err)
-	results, err := postgres.NewResultRepo(pool)
+	results, err := postgres.NewResultRepo(db)
 	require.NoError(t, err)
-	admins, err := postgres.NewAdminRepo(pool)
+	admins, err := postgres.NewAdminRepo(db)
 	require.NoError(t, err)
 
 	return polls, results, admins

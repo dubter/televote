@@ -16,7 +16,6 @@ import (
 	"github.com/dubter/televote/internal/domain"
 
 	"github.com/dubter/televote/internal/service/pollcfg"
-	"github.com/dubter/televote/internal/service/vote"
 )
 
 type ConfigCache interface {
@@ -66,21 +65,30 @@ func NewPublicHandler(
 
 func (h *PublicHandler) Routes() chi.Router {
 	r := chi.NewRouter()
+	r.Get("/time", h.serverTime)
 	r.Get("/polls/{slug}", h.pollConfig)
 	r.Post("/polls/{slug}/vote", h.castVote)
 	return r
 }
 
+type serverTimeResponse struct {
+	ServerTime string `json:"server_time"`
+}
+
+func (h *PublicHandler) serverTime(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, serverTimeResponse{ServerTime: h.now().UTC().Format(time.RFC3339)})
+}
+
 type pollConfigResponse struct {
-	Slug       string   `json:"slug"`
-	Question   string   `json:"question"`
-	Options    []string `json:"options"`
-	Type       string   `json:"type"`
-	Min        uint8    `json:"min_choices"`
-	Max        uint8    `json:"max_choices"`
-	OpensAt    string   `json:"opens_at"`
-	ClosesAt   string   `json:"closes_at"`
-	ServerTime string   `json:"server_time"`
+	Slug     string   `json:"slug"`
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
+	Type     string   `json:"type"`
+	Min      uint8    `json:"min_choices"`
+	Max      uint8    `json:"max_choices"`
+	OpensAt  string   `json:"opens_at"`
+	ClosesAt string   `json:"closes_at"`
 }
 
 func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
@@ -98,15 +106,14 @@ func (h *PublicHandler) pollConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=10")
 
 	writeJSON(w, http.StatusOK, pollConfigResponse{
-		Slug:       cfg.Slug,
-		Question:   cfg.Question,
-		Options:    options,
-		Type:       string(cfg.Rules.Type),
-		Min:        cfg.Rules.MinChoices,
-		Max:        cfg.Rules.MaxChoices,
-		OpensAt:    cfg.Window.OpensAt.UTC().Format(time.RFC3339),
-		ClosesAt:   cfg.Window.ClosesAt.UTC().Format(time.RFC3339),
-		ServerTime: h.now().UTC().Format(time.RFC3339),
+		Slug:     cfg.Slug,
+		Question: cfg.Question,
+		Options:  options,
+		Type:     string(cfg.Rules.Type),
+		Min:      cfg.Rules.MinChoices,
+		Max:      cfg.Rules.MaxChoices,
+		OpensAt:  cfg.Window.OpensAt.UTC().Format(time.RFC3339),
+		ClosesAt: cfg.Window.ClosesAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -149,7 +156,7 @@ func (h *PublicHandler) castVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	voterID, err := vote.DeriveVoterID(cfg.Salt, req.Voter)
+	voterID, err := domain.DeriveVoterID(cfg.Salt, req.Voter)
 	if err != nil {
 		h.obs.VoteRejected(reasonBadVoter)
 		WriteError(w, r, err)

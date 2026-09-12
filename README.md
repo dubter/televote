@@ -155,14 +155,16 @@ on the broadcast schedule instead.
 cmd/{api,consumer,snapshot,migrate}
 
 internal/
-  domain     entities, choice rules, FSM, aggregate, capacity calculation
-  service    vote, consumer, snapshot, pollcfg, capacity, auth
-  adapter    httpapi, producer, postgres
+  domain     entities, voterID, choice rules, FSM, aggregate, capacity calculation
+  service    consumer, snapshot, pollcfg, capacity, auth
+  transport  httpapi — inbound adapters: router, handlers, web/
+  adapter    postgres, redis, producer — outbound adapters
   platform   app, config, metrics, observability, health, httpx
 ```
 
-Dependencies point inward: `internal/domain` imports nothing from the project, and `depguard`
-enforces it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
+Dependencies point inward: `internal/domain` imports nothing from the project, services
+never see `rueidis`/`pgx`, handlers never see `rueidis`/`pgx`/`kgo`, and `depguard` enforces
+all of it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
 on consumer lag, the snapshotter does not scale at all. The local stand-up brings up the same
 topology.
 

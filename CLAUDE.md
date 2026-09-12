@@ -21,11 +21,18 @@ make load     k6
 ## Layer boundaries
 
 ```
-domain  ◄──  application  ◄──  adapters (httpapi, storage, vote, snapshot)
+domain  ◄──  service  ◄──  transport (httpapi)
+domain  ◄──  adapter (postgres, redis, producer)
+platform/app — the only place where all of them meet
 ```
 
-`internal/domain` imports **nothing** from the project. Reverse imports are forbidden by
-`depguard` in `.golangci.yml` — that is a check, not a preference.
+`internal/domain` imports **nothing** from the project. Services never see `rueidis`,
+`pgx` or `net/http`; handlers never see `rueidis`, `pgx` or `kgo`. All of this is forbidden
+by `depguard` in `.golangci.yml` — that is a check, not a preference.
+
+Every binary wires itself: `app.RunAPI`, `app.RunConsumer` and `app.RunSnapshot` open
+exactly their own connections and release them with `defer`. Only the lifecycle is shared
+(`lifecycle.go`): config, telemetry, `/livez /readyz /metrics`, signals, shutdown.
 
 ## Invariants that break silently
 
@@ -67,7 +74,7 @@ The dedup key records the fact of voting, not the choice.
 | Subject | Rule |
 |---|---|
 | Constructors | `New*(deps...) (*T, error)`, dependencies as parameters. No globals and no `init()` |
-| Errors | typed domain errors; the **single** mapping point is `internal/httpapi/errors.go` |
+| Errors | typed domain errors; the **single** mapping point is `internal/transport/httpapi/errors.go` |
 | Context | `ctx` first, a timeout on every external call |
 | Interfaces | declared on the consumer side, kept narrow |
 | Logs | `slog`, `trace_id` on every record. On the hot path, sampling and errors only |
