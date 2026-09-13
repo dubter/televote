@@ -44,9 +44,8 @@ cover: ## покрытие без сгенерированных моков
 	@go tool cover -func=coverage.out | tail -1
 
 .PHONY: mocks
-mocks: ## перегенерировать моки (mockgen)
-	@go run go.uber.org/mock/mockgen@latest -version >/dev/null 2>&1 || true
-	@PATH="$(HOME)/go/bin:$$PATH" go generate ./...
+mocks: ## перегенерировать моки (mockgen, версия прибита в go:generate)
+	@go generate ./...
 
 .PHONY: lint
 lint: ## golangci-lint в докере, версия та же, что в CI

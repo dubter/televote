@@ -63,6 +63,7 @@ Re-read this before changing the related code.
 | Postgres is not on the hot path | otherwise its failure stops the voting |
 | Closing by hand moves `closes_at`, not the status | status `closed` drops the poll out of the snapshotter's selection: the final seconds never land in the result, and the published result is not written at all |
 | Never answer success for a vote Redis did not accept | lying to the client is worse than showing a 503 |
+| `RATE_LIMIT_PER_MIN` is **per replica**, and the ingress balances round-robin | hashing by client IP would pin a whole CGNAT egress (hundreds of thousands of viewers behind one address) onto a single replica at the broadcast peak; a Redis-backed limiter would put Redis on the ingest hot path. The effective per-IP limit is therefore N × the setting — size it for that |
 
 ## Privacy
 

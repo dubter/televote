@@ -73,7 +73,12 @@ counting can be deferred, and that is what gave the system its shape.
 | Redis down for a minute | **the broadcast is lost** | a late result |
 
 Capacity comes from `domain.CapacityFor` applied to `expected_audience`: draining in 5 minutes
-takes 3 Redis masters, draining in one takes 13.
+takes 3 Redis masters, draining in one takes 13. The function assumes 80k votes/s per master;
+measured on the stand (`INFO commandstats`, Docker on a laptop) one vote costs Redis 21.5 µs of
+server time — 8 µs of actual work (`SET NX EX`, two `HINCRBY`, `EXPIRE`) and 13 µs of `EVALSHA`
+dispatch. Batching votes of one `(poll, shard)` into a single script call would cut that to
+≈9.5 µs at the price of one trace span per batch instead of per vote; it is deliberately not
+done until production hardware says the Redis tier is the bottleneck.
 
 ```mermaid
 sequenceDiagram
@@ -212,7 +217,7 @@ limit or Kafka unavailable.
 |---|---|---|
 | `localStorage` plus a poll-salted hash | F5, closing the tab, double click | incognito, another browser |
 | `SET NX` inside Lua | a repeat under the same identifier | a new identifier |
-| Rate limit per /64 prefix | a naive script | a proxy |
+| Rate limit per /64 prefix, per replica | a naive script | a proxy; N replicas multiply the limit — by design, see `CLAUDE.md` |
 
 The spec asks for protection "at the level of ordinary, non-technical users". These layers stop
 a person hitting F5, but not a twenty-line script — that is compliance with the requirement, not
