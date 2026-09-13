@@ -285,3 +285,45 @@ func TestTick_ReportsLagAndBallotsToObserver(t *testing.T) {
 
 	require.NoError(t, s.Tick(context.Background()))
 }
+
+func TestTick_LosingTheScheduledOpenRaceToAnotherInstanceIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	p := openPoll()
+	p.Status = domain.StatusScheduled
+
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+	polls.EXPECT().Transition(gomock.Any(), p.ID, domain.StatusOpen, p.Version).Return(domain.ErrVersionConflict)
+
+	res, _ := resultStore(t, ctrl)
+	s := newSnapshotter(t, mocks.NewMockAggregator(ctrl), res, polls, mocks.NewMockLagReader(ctrl), opensAt.Add(time.Second))
+
+	require.NoError(t, s.Tick(context.Background()),
+		"второй снапшотер уже открыл опрос: это не ошибка цикла, а проигранная гонка")
+}
+
+func TestTick_LosingTheFinalizeRaceToAnotherInstanceIsNotAnError(t *testing.T) {
+	t.Parallel()
+
+	ctrl := gomock.NewController(t)
+	p := openPoll()
+
+	agg := mocks.NewMockAggregator(ctrl)
+	agg.EXPECT().Aggregate(gomock.Any(), p.Sharding()).
+		Return(domain.NewAggregateFrom(map[uint8]int64{0: 10}, 10), nil).AnyTimes()
+
+	polls := mocks.NewMockPolls(ctrl)
+	polls.EXPECT().ListActive(gomock.Any()).Return([]*domain.Poll{p}, nil)
+	polls.EXPECT().Transition(gomock.Any(), p.ID, domain.StatusClosed, p.Version).Return(domain.ErrVersionConflict)
+
+	lag := mocks.NewMockLagReader(ctrl)
+	lag.EXPECT().Lag(gomock.Any()).Return(int64(0), nil)
+
+	res, store := resultStore(t, ctrl)
+	s := newSnapshotter(t, agg, res, polls, lag, closesAt.Add(time.Minute))
+
+	require.NoError(t, s.Tick(context.Background()))
+	assert.EqualValues(t, 10, store.get().Ballots, "снапшот всё равно записан: GREATEST делает это безопасным")
+}
