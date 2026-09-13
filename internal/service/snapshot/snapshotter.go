@@ -99,7 +99,10 @@ func (s *Snapshotter) handle(ctx context.Context, p *domain.Poll) error {
 	now := s.now()
 
 	if p.ShouldOpenAt(now) {
-		if err := s.polls.Transition(ctx, p.ID, domain.StatusOpen, p.Version); err != nil {
+		switch err := s.polls.Transition(ctx, p.ID, domain.StatusOpen, p.Version); {
+		case errors.Is(err, domain.ErrVersionConflict):
+			return nil
+		case err != nil:
 			return fmt.Errorf("scheduled open: %w", err)
 		}
 		s.log.InfoContext(ctx, "snapshot: poll opened on schedule", slog.String("slug", p.Slug))
@@ -155,7 +158,10 @@ func (s *Snapshotter) Finalize(ctx context.Context, p *domain.Poll) error {
 	if err != nil {
 		return fmt.Errorf("final snapshot: %w", err)
 	}
-	if err := s.polls.Transition(ctx, p.ID, domain.StatusClosed, p.Version); err != nil {
+	switch err := s.polls.Transition(ctx, p.ID, domain.StatusClosed, p.Version); {
+	case errors.Is(err, domain.ErrVersionConflict):
+		return nil
+	case err != nil:
 		return fmt.Errorf("close poll: %w", err)
 	}
 

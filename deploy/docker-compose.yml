@@ -183,7 +183,7 @@ services:
       <<: *app-env
       INSTANCE: snapshot
     deploy:
-      replicas: 1
+      replicas: 2
 
   lb:
     image: nginx:1.27-alpine

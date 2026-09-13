@@ -165,9 +165,14 @@ internal/
 
 Dependencies point inward: `internal/domain` imports nothing from the project, services see
 only domain and their own interfaces, handlers and workers see only services and domain, and
-`depguard` enforces all of it. Three roles, three binaries: ingest scales for the broadcast peak, consumers scale
-on consumer lag, the snapshotter does not scale at all. The local stand-up brings up the same
-topology.
+`depguard` enforces all of it.
+
+Three roles, three binaries, each safe to run in several instances: ingest is stateless and
+scales for the broadcast peak; consumers share a Kafka group and scale on consumer lag up to
+the partition count; the snapshotter needs no scaling but runs as two instances for
+availability — status transitions are guarded by the poll version and snapshots by `GREATEST`,
+so a second instance can only lose a race, never double-count. The local stand-up brings up
+the same topology.
 
 Stack: Go 1.26, `franz-go`, `rueidis`, `pgx/v5`, `chi`, OpenTelemetry → `grafana/otel-lgtm`.
 Only the business logic is hand-written: the Lua script, deriving `voterID` with the poll salt,
