@@ -1,6 +1,6 @@
 package snapshot
 
-//go:generate mockgen -source=snapshotter.go -destination=mocks/snapshotter.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=snapshotter.go -destination=mocks/snapshotter.go -package=mocks
 
 import (
 	"context"

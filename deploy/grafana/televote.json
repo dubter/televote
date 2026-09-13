@@ -614,7 +614,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "sum(televote_votes_accepted_total)",
+          "expr": "sum(increase(televote_votes_accepted_total[$__range]))",
           "legendFormat": "принято",
           "range": true,
           "instant": false,
@@ -626,7 +626,7 @@
             "uid": "prometheus"
           },
           "refId": "B",
-          "expr": "sum(televote_votes_counted_total)",
+          "expr": "sum(increase(televote_votes_counted_total[$__range]))",
           "legendFormat": "посчитано",
           "range": true,
           "instant": false,

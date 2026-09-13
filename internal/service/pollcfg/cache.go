@@ -1,6 +1,6 @@
 package pollcfg
 
-//go:generate mockgen -source=cache.go -destination=mocks/cache.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=cache.go -destination=mocks/cache.go -package=mocks
 
 import (
 	"bytes"

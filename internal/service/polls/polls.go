@@ -1,6 +1,6 @@
 package polls
 
-//go:generate mockgen -source=polls.go -destination=mocks/polls.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=polls.go -destination=mocks/polls.go -package=mocks
 
 import (
 	"context"

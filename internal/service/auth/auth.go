@@ -1,6 +1,6 @@
 package auth
 
-//go:generate mockgen -source=auth.go -destination=mocks/auth.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=auth.go -destination=mocks/auth.go -package=mocks
 
 import (
 	"context"

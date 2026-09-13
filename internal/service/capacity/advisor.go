@@ -1,6 +1,6 @@
 package capacity
 
-//go:generate mockgen -source=advisor.go -destination=mocks/advisor.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=advisor.go -destination=mocks/advisor.go -package=mocks
 
 import (
 	"context"

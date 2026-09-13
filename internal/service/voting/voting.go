@@ -1,6 +1,6 @@
 package voting
 
-//go:generate mockgen -source=voting.go -destination=mocks/voting.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=voting.go -destination=mocks/voting.go -package=mocks
 
 import (
 	"context"

@@ -1,6 +1,6 @@
 package httpapi
 
-//go:generate mockgen -source=public.go -destination=mocks/public.go -package=mocks
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=public.go -destination=mocks/public.go -package=mocks
 
 import (
 	"context"
